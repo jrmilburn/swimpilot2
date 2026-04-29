@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { Webhook } from "svix";
-import { PrismaClient } from "../../src/generated/prisma/client";
+import { PrismaClient } from "@prisma/client";
 import { prisma } from "../../src/lib/db/client";
 import { POST } from "../../src/app/api/webhooks/clerk/route";
 

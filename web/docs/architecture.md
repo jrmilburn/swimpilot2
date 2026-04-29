@@ -7,7 +7,6 @@ All database access goes through a **repository layer**. Domain code (server act
 This is enforced by an ESLint rule (`no-restricted-imports`, `error` level) banning imports of:
 
 - `@prisma/client` and its subpaths
-- `**/app/generated/prisma/**` (the generated client output, see `prisma/schema.prisma`)
 - the wrapped client at `src/lib/db/client`
 
 The ban is lifted only for files under:

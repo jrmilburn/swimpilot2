@@ -5,6 +5,7 @@ export type DbClient = TenantTx | typeof prisma;
 
 export type School = {
   id: string;
+  slug: string;
   name: string;
   timezone: string;
   currency: string;
@@ -16,12 +17,14 @@ export type School = {
 };
 
 export type CreateSchoolInput = {
+  slug: string;
   name: string;
   timezone: string;
   currency: string;
 };
 
 export type UpdateSchoolInput = Partial<{
+  slug: string;
   name: string;
   timezone: string;
   currency: string;
@@ -30,6 +33,7 @@ export type UpdateSchoolInput = Partial<{
 
 type SchoolRow = {
   id: string;
+  slug: string;
   name: string;
   timezone: string;
   currency: string;
@@ -43,6 +47,7 @@ type SchoolRow = {
 function toSchool(row: SchoolRow): School {
   return {
     id: row.id,
+    slug: row.slug,
     name: row.name,
     timezone: row.timezone,
     currency: row.currency,

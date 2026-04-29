@@ -20,6 +20,22 @@ export function runWithTenant<T>(
   return storage.run(ctx, fn);
 }
 
+/**
+ * Set the actor for the rest of the current async chain.
+ *
+ * Used by `requireTenant()` (a server-component helper) which can't wrap
+ * its caller in a callback the way `withTenant` does. `enterWith` binds
+ * the store to *this* async context onwards, so descendants in the same
+ * request render see the actor when the audit-fields extension calls
+ * `getActorId()`.
+ *
+ * Each Next.js render runs in its own async context root, so this won't
+ * leak across requests.
+ */
+export function setRequestActor(actorId: string, schoolId?: string): void {
+  storage.enterWith({ actorId, schoolId });
+}
+
 export function getActorId(): string {
   return storage.getStore()?.actorId ?? SYSTEM_USER_ID;
 }

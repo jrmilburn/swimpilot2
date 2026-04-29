@@ -131,6 +131,88 @@ opening the transaction.
 owner — including some Supabase admin tooling — silently sees
 everything.
 
+## Tenant resolution: a deliberate RLS bypass
+
+The post-sign-in landing page (`/`) and the routing layer (`/s/[slug]/`)
+have to answer two questions **before** any tenant context exists:
+
+1. "Which schools is this user a member of?" (the landing page picker /
+   redirect)
+2. "Does the school with this slug exist, and does the caller have an
+   active membership in it?" (the `requireTenant()` gate on every
+   tenant route)
+
+Both queries hit `schools` and `memberships` — RLS-protected tables.
+With no `app.school_id` set, RLS returns zero rows and the query is
+useless. We can't set `app.school_id` either, because picking the right
+value is the whole point of the lookup. This is a true chicken-and-egg
+case where RLS has nothing to enforce yet.
+
+The seam is **two SECURITY DEFINER functions in Postgres**, owned by
+the migration role and granted EXECUTE to `swimpilot_app`:
+
+- `app_resolve_tenant(slug text, user_id uuid)` →
+  `(school_id uuid, school_name text, role role)`
+- `app_list_user_memberships(user_id uuid)` →
+  `(school_id, slug, name, role)` for every active membership
+
+`SECURITY DEFINER` makes the function body run with the owner's
+privileges, so it sees through RLS — but the **surface area is narrow**.
+The app role doesn't get blanket SELECT on `schools` or `memberships`;
+it can only invoke these two functions, which return only the projection
+each function chose. An attacker who somehow controlled the slug or
+user_id arguments still couldn't escalate beyond "see this user's own
+memberships and schools."
+
+This is not the same thing as adding a service-role Prisma client. We
+considered that and rejected it: a second connection pool with
+BYPASSRLS-equivalent privileges is a much bigger blast radius than two
+specific functions, and it's easy for future code to reach for the
+service-role client when the RLS-scoped path is what's wanted.
+
+Code-side wiring lives in `src/repositories/tenantRepository.ts` —
+`lookupTenant()` and `listUserMemberships()`. Both run on the base
+Prisma client (the `swimpilot_app` connection) using `$queryRaw` against
+the SECURITY DEFINER functions. They're called from
+`src/lib/auth/resolveTenant.ts` and `src/lib/auth/requireTenant.ts`.
+
+### 404 vs 403 for unauthorised tenant access
+
+`requireTenant()` decides the response when something goes wrong before
+a route renders:
+
+| Situation                                       | Response       |
+| ----------------------------------------------- | -------------- |
+| Not signed in                                   | redirect `/sign-in` |
+| Signed in, slug doesn't exist                   | 404 (`notFound()`)  |
+| Signed in, slug exists, user is not a member    | 404 (`notFound()`)  |
+| Signed in, slug exists, user is a member        | route renders       |
+
+We deliberately collapse "no membership" (would naturally be 403) into
+"not found" (404). Returning a 403 for slugs the user doesn't belong to
+would let a signed-in user enumerate the set of valid school slugs by
+probing URLs and watching for the status flip from 404 → 403. Slugs are
+short, public-facing strings; we don't want them to be a discovery
+oracle. Treating both as 404 is the conservative choice and the cost is
+negligible — a member of School A typing in School B's URL was probably
+never going to see anything useful anyway.
+
+If we ever need to surface a friendlier "you're not a member of this
+school" message (e.g. for invite-link flows), the right answer is a
+distinct route (`/invite/[token]`) — not a 403 on `/s/[slug]`.
+
+### Defence-in-depth: actor stamping
+
+`requireTenant()` calls `setRequestActor(userId, schoolId)` on success
+(`src/lib/db/context.ts`). That uses `AsyncLocalStorage.enterWith`,
+binding the actor for the rest of the current async chain — meaning the
+audit-fields Prisma extension, when it runs underneath any repository
+call later in the same render, stamps `created_by` / `updated_by` with
+the real DB user id rather than `SYSTEM_USER_ID`.
+
+`enterWith` is safe here because Next.js opens a fresh async context
+root per request render; there's no cross-request bleed.
+
 ## What is NOT RLS-protected
 
 - **`users`**: a single human can be a member of multiple schools.

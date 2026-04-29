@@ -12,6 +12,19 @@ export type User = {
   deletedAt: Date | null;
 };
 
+// `users` is intentionally NOT under RLS (see docs/security.md), so this
+// lookup is safe with the base client and does not require a tenant context.
+export async function getByClerkId(clerkId: string): Promise<User | null> {
+  const rows = await prisma.$queryRaw<UserRow[]>`
+    SELECT id, clerk_id, email, name, created_at, updated_at, created_by, updated_by, deleted_at
+    FROM users
+    WHERE clerk_id = ${clerkId}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  return row ? toUser(row) : null;
+}
+
 export type UpsertFromClerkInput = {
   clerkId: string;
   email: string;

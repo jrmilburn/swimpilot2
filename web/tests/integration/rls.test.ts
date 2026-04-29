@@ -24,10 +24,10 @@ beforeAll(async () => {
     VALUES (${USER_A}::uuid, 'a@example.com', 'User A', now())
   `;
   await admin.$executeRaw`
-    INSERT INTO schools (id, name, timezone, currency, created_by, updated_by, updated_at)
+    INSERT INTO schools (id, slug, name, timezone, currency, created_by, updated_by, updated_at)
     VALUES
-      (${SCHOOL_A}::uuid, 'School A', 'Australia/Sydney', 'AUD', ${USER_A}::uuid, ${USER_A}::uuid, now()),
-      (${SCHOOL_B}::uuid, 'School B', 'Australia/Sydney', 'AUD', ${USER_A}::uuid, ${USER_A}::uuid, now())
+      (${SCHOOL_A}::uuid, 'school-a', 'School A', 'Australia/Sydney', 'AUD', ${USER_A}::uuid, ${USER_A}::uuid, now()),
+      (${SCHOOL_B}::uuid, 'school-b', 'School B', 'Australia/Sydney', 'AUD', ${USER_A}::uuid, ${USER_A}::uuid, now())
   `;
   await admin.$executeRaw`
     INSERT INTO locations (id, school_id, name, created_by, updated_by, updated_at)

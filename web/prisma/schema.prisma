@@ -5,7 +5,11 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("ADMIN_DATABASE_URL")
+  // Runtime client connects as the restricted `swimpilot_app` role so RLS
+  // is enforced. Migrations and admin tooling use ADMIN_DATABASE_URL via
+  // prisma.config.ts (which is what `prisma migrate deploy` reads). See
+  // docs/security.md.
+  url      = env("DATABASE_URL")
 }
 
 enum Role {
@@ -19,6 +23,7 @@ enum Role {
 
 model School {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug      String    @unique
   name      String
   timezone  String
   currency  String

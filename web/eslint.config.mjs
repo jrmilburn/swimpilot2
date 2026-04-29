@@ -43,7 +43,7 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     // Generated Prisma client — its own internals import from @prisma/client.
-    "app/generated/**",
+    "src/app/generated/**",
   ]),
   {
     rules: {

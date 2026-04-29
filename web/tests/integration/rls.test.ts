@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { PrismaClient } from "../../app/generated/prisma/client";
+import { PrismaClient } from "../../src/app/generated/prisma/client";
 import { prisma } from "../../src/lib/db/client";
 import { withTenant } from "../../src/lib/db/withTenant";
 

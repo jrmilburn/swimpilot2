@@ -5,11 +5,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  // Runtime client connects as the restricted `swimpilot_app` role so RLS
-  // is enforced. Migrations and admin tooling use ADMIN_DATABASE_URL via
-  // prisma.config.ts (which is what `prisma migrate deploy` reads). See
-  // docs/security.md.
-  url      = env("DATABASE_URL")
+  url      = env("ADMIN_DATABASE_URL")
 }
 
 enum Role {

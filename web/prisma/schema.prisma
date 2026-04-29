@@ -1,12 +1,12 @@
 generator client {
   provider      = "prisma-client"
-  output        = "../src/app/generated/prisma"
+  output        = "../src/generated/prisma"
   binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("ADMIN_DATABASE_URL")
 }
 
 enum Role {

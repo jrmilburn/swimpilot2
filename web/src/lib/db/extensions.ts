@@ -1,4 +1,4 @@
-import { Prisma } from "@/app/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { getActorId } from "./context";
 
 const DOMAIN_MODELS = new Set<string>([

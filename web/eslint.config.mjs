@@ -13,9 +13,9 @@ const prismaImportRule = [
       },
       {
         group: [
-          "**/app/generated/prisma",
-          "**/app/generated/prisma/*",
-          "**/app/generated/prisma/**",
+          "**/generated/prisma",
+          "**/generated/prisma/*",
+          "**/generated/prisma/**",
         ],
         message:
           "Prisma may only be imported from src/lib/db/** or src/repositories/**. Use a repository instead.",
@@ -43,7 +43,7 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     // Generated Prisma client — its own internals import from @prisma/client.
-    "src/app/generated/**",
+    "src/generated/**",
   ]),
   {
     rules: {

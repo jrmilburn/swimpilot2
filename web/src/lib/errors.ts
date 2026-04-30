@@ -11,3 +11,10 @@ export class ForbiddenError extends Error {
     this.name = "ForbiddenError";
   }
 }
+
+export class ValidationError extends Error {
+  constructor(message = "Invalid input") {
+    super(message);
+    this.name = "ValidationError";
+  }
+}

@@ -108,3 +108,126 @@ Walk through `create`:
 6. The returned row is mapped through `toSchool` and handed back as a `School` domain type — no Prisma types in the return signature.
 
 `getById` and `update` follow the same pattern. Without a tenant context (no `app.school_id` set), RLS rejects the read and `getById` returns `null` / `update` throws `RecordNotFound`. That is the intended "fail closed" behaviour.
+
+## Server actions and `tenantAction`
+
+Every server action under `/s/[schoolSlug]/` **must** be wrapped in `tenantAction()` from `src/lib/auth/tenantAction.ts`. No exceptions without architectural review. Server actions that bypass it would either run unscoped (data leak) or duplicate the resolution logic (drift).
+
+### The flow
+
+```
+form action  ─►  tenantAction wrapper
+                    │
+                    ├─► reads `x-school-slug` from request headers
+                    │     (set by middleware.ts for /s/[slug]/* routes)
+                    ├─► requireTenant(slug)  → { userId, schoolId, role }
+                    ├─► withTenant(...)      → opens RLS-scoped tx
+                    │     ├─► action body runs with TenantContext
+                    │     │     └─► repository(tx, …)  → Prisma  → Postgres
+                    │     └─► commit
+                    └─► result mapping → ActionResult<T>
+```
+
+1. Middleware sees `/s/[slug]/...` and forwards a trusted `x-school-slug` header to the action's request scope. Slug-from-headers is not user-controlled — never trust a slug from the action body.
+2. `tenantAction` reads the header, calls `requireTenant(slug)` (redirects unauthenticated callers; 404s missing/no-membership), then opens `withTenant`.
+3. Inside the transaction, GUCs `app.school_id` / `app.user_id` are set so RLS policies match. The audit-fields extension reads the same actor from `AsyncLocalStorage` and stamps `created_by` / `updated_by`.
+4. The wrapped function receives `{ userId, schoolId, role, tx }` and any args the caller passed. It calls repositories with `tx`.
+5. Typed errors are mapped to result codes. Anything else is logged with full stack and surfaced as a generic 500-equivalent.
+
+### Result-object convention
+
+Actions return `ActionResult<T>`:
+
+```ts
+type ActionResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: { code: 'NOT_FOUND' | 'FORBIDDEN' | 'VALIDATION' | 'INTERNAL'; message: string } };
+```
+
+Why a result instead of throwing?
+
+- Plays cleanly with React's `useActionState` / `useFormState` on the client — no try/catch in every form.
+- Forces the call site to acknowledge the failure path; throwing makes it easy to forget.
+- Lets the wrapper map domain errors to a finite set of codes the UI can render uniformly.
+
+Next.js's own control-flow errors (`redirect`, `notFound`, `forbidden`, `unauthorized`) are the exception: they MUST throw all the way out so the framework can handle them. The wrapper uses `unstable_rethrow` from `next/navigation` to re-throw those before the generic catch.
+
+### Action signature convention
+
+**Context-first, args after.** This is the canonical shape:
+
+```ts
+export const renameSchool = tenantAction(
+  async ({ tx, schoolId }, input: { name: string }) => {
+    return schoolRepository.update(tx, schoolId, { name: input.name });
+  },
+);
+```
+
+Rationale: the wrapper stays generic over typed arguments — it doesn't bake `FormData` into its signature, so the same wrapper works for actions called from typed client code. For form-driven actions, parse `FormData` at the call site (or with a Zod schema in the action body):
+
+```tsx
+async function rename(formData: FormData) {
+  "use server";
+  await renameSchool({ name: String(formData.get("name") ?? "") });
+}
+<form action={rename}>…</form>
+```
+
+### Error mapping
+
+| Inside the action body                            | Returned to caller                                       |
+| -------                                           | --------                                                 |
+| `throw new NotFoundError(msg)`                    | `{ ok: false, error: { code: 'NOT_FOUND', message } }`   |
+| `throw new ForbiddenError(msg)`                   | `{ ok: false, error: { code: 'FORBIDDEN', message } }`   |
+| `throw new ValidationError(msg)`                  | `{ ok: false, error: { code: 'VALIDATION', message } }`  |
+| Any other `throw`                                 | `{ ok: false, error: { code: 'INTERNAL', message: 'Something went wrong' } }` — original logged with stack, never sent to client |
+| `redirect()` / `notFound()` / `forbidden()` etc.  | Re-thrown via `unstable_rethrow` — framework handles     |
+
+### Reference example: `updateSchoolName`
+
+`src/app/s/[schoolSlug]/_actions/updateSchoolName.ts`:
+
+```ts
+"use server";
+
+import { z } from "zod";
+import { tenantAction } from "@/lib/auth/tenantAction";
+import { ValidationError } from "@/lib/errors";
+import * as schoolRepository from "@/repositories/schoolRepository";
+
+const Input = z.object({ name: z.string().min(1).max(120) });
+
+export const updateSchoolName = tenantAction(
+  async ({ tx, schoolId }, input: unknown) => {
+    const parsed = Input.safeParse(input);
+    if (!parsed.success) {
+      throw new ValidationError("Invalid school name");
+    }
+    return schoolRepository.update(tx, schoolId, { name: parsed.data.name });
+  },
+);
+```
+
+Walkthrough for a request:
+
+1. The dashboard at `/s/riverside` mounts a `<form>` whose `action` is a small server function that wraps `updateSchoolName`.
+2. The form posts back to `/s/riverside`. Middleware matches the path and sets `x-school-slug: riverside`.
+3. The form-action server function calls `updateSchoolName({ name: ... })`. `tenantAction` reads the header, runs `requireTenant("riverside")` → `{ userId, schoolId, role }`, opens `withTenant`.
+4. Inside the tx (`app.school_id` set), the wrapped body validates the input, then calls `schoolRepository.update(tx, schoolId, { name })`. RLS confirms the row belongs to riverside; the audit extension stamps `updated_by`.
+5. The wrapper returns `{ ok: true, data: <School> }`.
+
+If the user posts to a slug they don't belong to, middleware still sets the header from the URL but `requireTenant` calls `notFound()` — the 404 propagates via `unstable_rethrow`, never returned as a `{ ok: false, … }` result.
+
+### Where unscoped actions live
+
+Anything that can't be tied to a single school — admin tooling, webhooks (e.g. Clerk user sync), system jobs, cross-tenant reporting — does NOT use `tenantAction`. Those run elsewhere (typically `/api/webhooks/...` or admin-only routes) and use the base `prisma` client (RLS-bypass roles) under tightly-scoped code paths. They are out of scope for this layer.
+
+### Future hooks
+
+`tenantAction` is the natural place to add later, without touching action call sites:
+
+- structured logging (action name, slug, userId, duration, outcome code)
+- per-action rate limiting
+- request metrics / tracing spans
+- role-based authorisation policies (the `role` is already in `TenantContext`)

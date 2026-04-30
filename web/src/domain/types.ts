@@ -14,6 +14,7 @@ import type {
   CommunicationPreference,
   EnrolmentFrequency,
   EnrolmentStatus,
+  SkillStatus,
   StudentStatus,
   WeekDay,
 } from "./enums";
@@ -122,6 +123,29 @@ export interface AttendanceRecord {
   enrolmentId: string;
   studentId: string;
   status: AttendanceStatus;
+  note: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Skill {
+  id: string;
+  schoolId: string;
+  levelId: string;
+  name: string;
+  description: string | null;
+  orderIndex: number;
+  isArchived: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StudentSkill {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  skillId: string;
+  status: SkillStatus;
   note: string | null;
   createdAt: Date;
   updatedAt: Date;

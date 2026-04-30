@@ -70,6 +70,26 @@ type ClassLevelSeed = {
   defaultProgressionThreshold?: number;
 };
 
+type SkillSeed = {
+  // References by name within the school. Resolved at insert time.
+  levelName: string;
+  name: string;
+  description?: string;
+  orderIndex: number;
+};
+
+type StudentSkillSeed = {
+  // Match a student by (firstName, lastName) within the school, and a skill
+  // by (levelName, skillName). Lets the seed data stay readable without
+  // string-typed UUID maps.
+  studentFirstName: string;
+  studentLastName: string;
+  levelName: string;
+  skillName: string;
+  status: "not_introduced" | "working_on" | "achieved";
+  note?: string;
+};
+
 type DayOfWeek =
   | "monday"
   | "tuesday"
@@ -335,6 +355,504 @@ const COASTAL_LEVELS: ClassLevelSeed[] = [
     orderIndex: 3,
     minAgeMonths: 96,
     defaultProgressionThreshold: 90,
+  },
+];
+
+// Skill curriculum, loosely modelled on the AUSTSWIM / ASSA progression. Each
+// level lists the discrete competencies a teacher would tick off before
+// recommending the student moves up. Riverside and Coastal carry independent
+// frameworks — same idea, different wording — to keep cross-tenant testing
+// honest.
+const RIVERSIDE_SKILLS: SkillSeed[] = [
+  // Infants — water familiarisation with a parent.
+  {
+    levelName: "Infants",
+    name: "Comfort entering water",
+    description: "Enters pool calmly held by parent",
+    orderIndex: 0,
+  },
+  {
+    levelName: "Infants",
+    name: "Submerge face on cue",
+    description: "Briefly submerges face when prompted",
+    orderIndex: 1,
+  },
+  {
+    levelName: "Infants",
+    name: "Front float with support",
+    description: "Held face-down, body horizontal for 3 seconds",
+    orderIndex: 2,
+  },
+  {
+    levelName: "Infants",
+    name: "Back float with support",
+    description: "Held on back, ears in water, 5 seconds",
+    orderIndex: 3,
+  },
+  {
+    levelName: "Infants",
+    name: "Reach and grasp pool edge",
+    description: "Reaches for and holds the wall when guided",
+    orderIndex: 4,
+  },
+
+  // Beginner — independent intro.
+  {
+    levelName: "Beginner",
+    name: "Bobs and bubbles",
+    description: "Submerges, exhales through nose / mouth, recovers",
+    orderIndex: 0,
+  },
+  {
+    levelName: "Beginner",
+    name: "Independent front float",
+    description: "Face-down float unassisted for 5 seconds",
+    orderIndex: 1,
+  },
+  {
+    levelName: "Beginner",
+    name: "Independent back float",
+    description: "Back float unassisted for 5 seconds",
+    orderIndex: 2,
+  },
+  {
+    levelName: "Beginner",
+    name: "Streamline kick 5m",
+    description: "Push off wall in streamline, kick to 5m",
+    orderIndex: 3,
+  },
+  {
+    levelName: "Beginner",
+    name: "Recovery to standing",
+    description: "Recovers from front float to a standing position",
+    orderIndex: 4,
+  },
+  {
+    levelName: "Beginner",
+    name: "Freestyle arms 5m",
+    description: "Demonstrates alternating arm strokes for 5m",
+    orderIndex: 5,
+  },
+
+  // Intermediate — stroke development.
+  {
+    levelName: "Intermediate",
+    name: "Freestyle 15m",
+    description: "Continuous freestyle with side breathing for 15m",
+    orderIndex: 0,
+  },
+  {
+    levelName: "Intermediate",
+    name: "Backstroke 15m",
+    description: "Continuous backstroke with steady kick for 15m",
+    orderIndex: 1,
+  },
+  {
+    levelName: "Intermediate",
+    name: "Bilateral breathing",
+    description: "Breathes every third stroke for at least 10m",
+    orderIndex: 2,
+  },
+  {
+    levelName: "Intermediate",
+    name: "Tumble turn (intro)",
+    description: "Demonstrates a forward roll into the wall",
+    orderIndex: 3,
+  },
+  {
+    levelName: "Intermediate",
+    name: "Treading water 30s",
+    description: "Treads water for 30 seconds without aid",
+    orderIndex: 4,
+  },
+
+  // Advanced — all four strokes, distance.
+  {
+    levelName: "Advanced",
+    name: "Freestyle 50m",
+    description: "Continuous freestyle for 50m with bilateral breathing",
+    orderIndex: 0,
+  },
+  {
+    levelName: "Advanced",
+    name: "Backstroke 50m",
+    description: "Continuous backstroke for 50m",
+    orderIndex: 1,
+  },
+  {
+    levelName: "Advanced",
+    name: "Breaststroke 25m",
+    description: "Recognisable breaststroke arms and kick for 25m",
+    orderIndex: 2,
+  },
+  {
+    levelName: "Advanced",
+    name: "Butterfly 10m",
+    description: "Two-arm dolphin recovery for 10m",
+    orderIndex: 3,
+  },
+  {
+    levelName: "Advanced",
+    name: "Tumble turn (refined)",
+    description: "Tumble turn with streamlined push-off",
+    orderIndex: 4,
+  },
+  {
+    levelName: "Advanced",
+    name: "Survival sequence",
+    description: "1 minute treading + 25m clothed swim",
+    orderIndex: 5,
+  },
+];
+
+const COASTAL_SKILLS: SkillSeed[] = [
+  // Infants
+  {
+    levelName: "Infants",
+    name: "Happy in water",
+    description: "Settles in arms within 30 seconds of entering",
+    orderIndex: 0,
+  },
+  {
+    levelName: "Infants",
+    name: "Splash and play",
+    description: "Engages with toys / splashing without distress",
+    orderIndex: 1,
+  },
+  {
+    levelName: "Infants",
+    name: "Cued submersion",
+    description: "Closes eyes / mouth on count, briefly under",
+    orderIndex: 2,
+  },
+  {
+    levelName: "Infants",
+    name: "Supported back float",
+    description: "Calm on back with parent support, 5 seconds",
+    orderIndex: 3,
+  },
+  {
+    levelName: "Infants",
+    name: "Climb out at wall",
+    description: "Demonstrates safe exit at the pool wall",
+    orderIndex: 4,
+  },
+
+  // Beginner — Coastal phrases it as deep-water confidence.
+  {
+    levelName: "Beginner",
+    name: "Pool entry from edge",
+    description: "Slides in from the edge under control",
+    orderIndex: 0,
+  },
+  {
+    levelName: "Beginner",
+    name: "Submerge and retrieve",
+    description: "Picks up an object from chest-deep water",
+    orderIndex: 1,
+  },
+  {
+    levelName: "Beginner",
+    name: "Star float (front)",
+    description: "Front star float for 5 seconds unaided",
+    orderIndex: 2,
+  },
+  {
+    levelName: "Beginner",
+    name: "Star float (back)",
+    description: "Back star float for 5 seconds unaided",
+    orderIndex: 3,
+  },
+  {
+    levelName: "Beginner",
+    name: "Streamline glide 5m",
+    description: "Push and glide in streamline for 5m",
+    orderIndex: 4,
+  },
+  {
+    levelName: "Beginner",
+    name: "Freestyle kick 10m",
+    description: "Continuous flutter kick on a board for 10m",
+    orderIndex: 5,
+  },
+
+  // Intermediate
+  {
+    levelName: "Intermediate",
+    name: "Freestyle 25m",
+    description: "Continuous freestyle for 25m with side breathing",
+    orderIndex: 0,
+  },
+  {
+    levelName: "Intermediate",
+    name: "Backstroke 25m",
+    description: "Continuous backstroke for 25m",
+    orderIndex: 1,
+  },
+  {
+    levelName: "Intermediate",
+    name: "Endurance kick 50m",
+    description: "Two pool lengths on a kickboard, freestyle kick",
+    orderIndex: 2,
+  },
+  {
+    levelName: "Intermediate",
+    name: "Breath control 15s",
+    description: "Holds breath underwater for 15 seconds",
+    orderIndex: 3,
+  },
+  {
+    levelName: "Intermediate",
+    name: "Sculling on back",
+    description: "Sculls on back for 10m",
+    orderIndex: 4,
+  },
+
+  // Pre-Squad — squad-prep technique and pace.
+  {
+    levelName: "Pre-Squad",
+    name: "Freestyle 100m on pace",
+    description: "100m freestyle at coach-set interval",
+    orderIndex: 0,
+  },
+  {
+    levelName: "Pre-Squad",
+    name: "Backstroke 100m on pace",
+    description: "100m backstroke at coach-set interval",
+    orderIndex: 1,
+  },
+  {
+    levelName: "Pre-Squad",
+    name: "Breaststroke 50m legal",
+    description: "Legal breaststroke for 50m",
+    orderIndex: 2,
+  },
+  {
+    levelName: "Pre-Squad",
+    name: "Butterfly 25m",
+    description: "Continuous butterfly for 25m",
+    orderIndex: 3,
+  },
+  {
+    levelName: "Pre-Squad",
+    name: "Tumble turn freestyle",
+    description: "Tumble turn with two-foot wall contact",
+    orderIndex: 4,
+  },
+  {
+    levelName: "Pre-Squad",
+    name: "Dive entry",
+    description: "Standing dive from the blocks under supervision",
+    orderIndex: 5,
+  },
+];
+
+// Per-student progression. Distributed so the dev UI shows a realistic mix —
+// a few students near the top of their level, a few in the middle, a few who
+// have only just started. Idempotent on (student_id, skill_id).
+const RIVERSIDE_STUDENT_SKILLS: StudentSkillSeed[] = [
+  // Mia (Intermediate) — strong, near level-up.
+  {
+    studentFirstName: "Mia",
+    studentLastName: "Nguyen",
+    levelName: "Intermediate",
+    skillName: "Freestyle 15m",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Mia",
+    studentLastName: "Nguyen",
+    levelName: "Intermediate",
+    skillName: "Backstroke 15m",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Mia",
+    studentLastName: "Nguyen",
+    levelName: "Intermediate",
+    skillName: "Bilateral breathing",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Mia",
+    studentLastName: "Nguyen",
+    levelName: "Intermediate",
+    skillName: "Tumble turn (intro)",
+    status: "working_on",
+    note: "Confident but still pulling up early.",
+  },
+  {
+    studentFirstName: "Mia",
+    studentLastName: "Nguyen",
+    levelName: "Intermediate",
+    skillName: "Treading water 30s",
+    status: "achieved",
+  },
+
+  // Leo (Beginner) — middle of the level.
+  {
+    studentFirstName: "Leo",
+    studentLastName: "Nguyen",
+    levelName: "Beginner",
+    skillName: "Bobs and bubbles",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Leo",
+    studentLastName: "Nguyen",
+    levelName: "Beginner",
+    skillName: "Independent front float",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Leo",
+    studentLastName: "Nguyen",
+    levelName: "Beginner",
+    skillName: "Independent back float",
+    status: "working_on",
+    note: "Tense in the shoulders, sinks after 2s.",
+  },
+  {
+    studentFirstName: "Leo",
+    studentLastName: "Nguyen",
+    levelName: "Beginner",
+    skillName: "Streamline kick 5m",
+    status: "working_on",
+  },
+
+  // Aarav (Advanced) — deep into the level.
+  {
+    studentFirstName: "Aarav",
+    studentLastName: "Patel",
+    levelName: "Advanced",
+    skillName: "Freestyle 50m",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Aarav",
+    studentLastName: "Patel",
+    levelName: "Advanced",
+    skillName: "Backstroke 50m",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Aarav",
+    studentLastName: "Patel",
+    levelName: "Advanced",
+    skillName: "Breaststroke 25m",
+    status: "working_on",
+  },
+  {
+    studentFirstName: "Aarav",
+    studentLastName: "Patel",
+    levelName: "Advanced",
+    skillName: "Butterfly 10m",
+    status: "working_on",
+  },
+
+  // Vihaan (Infants) — just starting.
+  {
+    studentFirstName: "Vihaan",
+    studentLastName: "Patel",
+    levelName: "Infants",
+    skillName: "Comfort entering water",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Vihaan",
+    studentLastName: "Patel",
+    levelName: "Infants",
+    skillName: "Submerge face on cue",
+    status: "working_on",
+    note: "Will go to the lip but not over.",
+  },
+];
+
+const COASTAL_STUDENT_SKILLS: StudentSkillSeed[] = [
+  // Eloise (Beginner)
+  {
+    studentFirstName: "Eloise",
+    studentLastName: "Mackenzie",
+    levelName: "Beginner",
+    skillName: "Pool entry from edge",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Eloise",
+    studentLastName: "Mackenzie",
+    levelName: "Beginner",
+    skillName: "Submerge and retrieve",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Eloise",
+    studentLastName: "Mackenzie",
+    levelName: "Beginner",
+    skillName: "Star float (front)",
+    status: "working_on",
+  },
+
+  // Zaynab (Intermediate)
+  {
+    studentFirstName: "Zaynab",
+    studentLastName: "Rahman",
+    levelName: "Intermediate",
+    skillName: "Freestyle 25m",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Zaynab",
+    studentLastName: "Rahman",
+    levelName: "Intermediate",
+    skillName: "Backstroke 25m",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Zaynab",
+    studentLastName: "Rahman",
+    levelName: "Intermediate",
+    skillName: "Endurance kick 50m",
+    status: "working_on",
+  },
+
+  // Tessa (Pre-Squad)
+  {
+    studentFirstName: "Tessa",
+    studentLastName: "Anderson",
+    levelName: "Pre-Squad",
+    skillName: "Freestyle 100m on pace",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Tessa",
+    studentLastName: "Anderson",
+    levelName: "Pre-Squad",
+    skillName: "Backstroke 100m on pace",
+    status: "working_on",
+  },
+  {
+    studentFirstName: "Tessa",
+    studentLastName: "Anderson",
+    levelName: "Pre-Squad",
+    skillName: "Tumble turn freestyle",
+    status: "working_on",
+    note: "Almost there — sometimes opens too early.",
+  },
+
+  // Hugo (Infants)
+  {
+    studentFirstName: "Hugo",
+    studentLastName: "Mackenzie",
+    levelName: "Infants",
+    skillName: "Happy in water",
+    status: "achieved",
+  },
+  {
+    studentFirstName: "Hugo",
+    studentLastName: "Mackenzie",
+    levelName: "Infants",
+    skillName: "Splash and play",
+    status: "achieved",
   },
 ];
 
@@ -1115,6 +1633,108 @@ type ResolvedEnrolment = {
   status: "active" | "paused" | "withdrawn";
 };
 
+async function seedSkills(
+  prisma: PrismaClient,
+  schoolSlug: string,
+  skills: SkillSeed[],
+) {
+  const school = await prisma.school.findUnique({
+    where: { slug: schoolSlug },
+    select: { id: true },
+  });
+  if (!school) throw new Error(`seed: school ${schoolSlug} not found`);
+
+  for (const s of skills) {
+    const level = await prisma.classLevel.findFirst({
+      where: { schoolId: school.id, name: s.levelName },
+      select: { id: true },
+    });
+    if (!level) {
+      throw new Error(
+        `seed: level "${s.levelName}" missing in ${schoolSlug} for skill "${s.name}"`,
+      );
+    }
+
+    // Idempotent on the (school_id, level_id, name) unique index.
+    await prisma.$executeRaw`
+      INSERT INTO skills (
+        school_id, level_id, name, description, order_index,
+        created_by, updated_by, updated_at
+      ) VALUES (
+        ${school.id}::uuid, ${level.id}::uuid, ${s.name}, ${s.description ?? null},
+        ${s.orderIndex},
+        ${SYSTEM_USER_ID}::uuid, ${SYSTEM_USER_ID}::uuid, now()
+      )
+      ON CONFLICT (school_id, level_id, name) DO UPDATE SET
+        description = EXCLUDED.description,
+        order_index = EXCLUDED.order_index,
+        updated_at = now()
+    `;
+  }
+}
+
+async function seedStudentSkills(
+  prisma: PrismaClient,
+  schoolSlug: string,
+  rows: StudentSkillSeed[],
+) {
+  const school = await prisma.school.findUnique({
+    where: { slug: schoolSlug },
+    select: { id: true },
+  });
+  if (!school) throw new Error(`seed: school ${schoolSlug} not found`);
+
+  for (const r of rows) {
+    const student = await prisma.student.findFirst({
+      where: {
+        schoolId: school.id,
+        firstName: r.studentFirstName,
+        lastName: r.studentLastName,
+      },
+      select: { id: true },
+    });
+    if (!student) {
+      throw new Error(
+        `seed: student ${r.studentFirstName} ${r.studentLastName} missing in ${schoolSlug}`,
+      );
+    }
+    const level = await prisma.classLevel.findFirst({
+      where: { schoolId: school.id, name: r.levelName },
+      select: { id: true },
+    });
+    if (!level) {
+      throw new Error(
+        `seed: level "${r.levelName}" missing in ${schoolSlug}`,
+      );
+    }
+    const skill = await prisma.skill.findFirst({
+      where: { schoolId: school.id, levelId: level.id, name: r.skillName },
+      select: { id: true },
+    });
+    if (!skill) {
+      throw new Error(
+        `seed: skill "${r.skillName}" missing on ${r.levelName} in ${schoolSlug}`,
+      );
+    }
+
+    // Idempotent on the (student_id, skill_id) unique index.
+    await prisma.$executeRaw`
+      INSERT INTO student_skills (
+        school_id, student_id, skill_id, status, note,
+        created_by, updated_by, updated_at
+      ) VALUES (
+        ${school.id}::uuid, ${student.id}::uuid, ${skill.id}::uuid,
+        ${r.status}::skill_status, ${r.note ?? null},
+        ${SYSTEM_USER_ID}::uuid, ${SYSTEM_USER_ID}::uuid, now()
+      )
+      ON CONFLICT (student_id, skill_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        note = EXCLUDED.note,
+        updated_at = now()
+    `;
+  }
+}
+
 async function seedEnrolments(
   prisma: PrismaClient,
   schoolSlug: string,
@@ -1400,6 +2020,13 @@ async function main() {
     const classCount = await prisma.class.count();
     console.log(`Seeded class levels: ${levelCount}, classes: ${classCount}`);
 
+    // Skill curriculum: per-level competencies. Idempotent on
+    // (school_id, level_id, name).
+    await seedSkills(prisma, "riverside", RIVERSIDE_SKILLS);
+    await seedSkills(prisma, "coastal", COASTAL_SKILLS);
+    const skillCount = await prisma.skill.count();
+    console.log(`Seeded skills: ${skillCount}`);
+
     // Enrolments + recent sessions/attendance. Idempotent — enrolments
     // matched on (school, student, class, start_date); sessions on the
     // unique (class_id, session_date) index; attendance on
@@ -1423,6 +2050,14 @@ async function main() {
     console.log(
       `Seeded enrolments: ${enrolmentCount}, sessions: ${sessionCount}, attendance: ${attendanceCount}`,
     );
+
+    // Per-student progression. Runs after enrolments so the dev UI for
+    // Sprint 7 finds students who already sit on a level with skills.
+    // Idempotent on (student_id, skill_id).
+    await seedStudentSkills(prisma, "riverside", RIVERSIDE_STUDENT_SKILLS);
+    await seedStudentSkills(prisma, "coastal", COASTAL_STUDENT_SKILLS);
+    const studentSkillCount = await prisma.studentSkill.count();
+    console.log(`Seeded student_skills: ${studentSkillCount}`);
   } finally {
     await prisma.$disconnect();
   }

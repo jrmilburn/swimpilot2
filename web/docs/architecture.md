@@ -568,3 +568,93 @@ composed with `classSessionRepository.listByClass` to merge expected
 dates with materialised session rows. It must stay pure — if you find
 yourself wanting to call the DB or read the wall clock from inside it,
 move that decision out to the caller and pass the date range in.
+
+## Domain model — Skills
+
+### The two tables
+
+Sprint 3 / Chunk 4 adds the per-school progression curriculum and the
+per-student record of who has achieved what:
+
+- `skills` — a competency within a level. Scoped to `(school_id,
+  level_id)`, with `name`, `description`, `order_index`, `is_archived`.
+  Same level can hold many skills; the same skill name can recur in
+  another level (e.g. "Streamline" in both Beginner and Intermediate).
+- `student_skills` — one row per `(student_id, skill_id)`, mutated
+  over time. Status is `not_introduced` / `working_on` / `achieved`,
+  plus an optional teacher note.
+
+Both follow Sprint 1 conventions: UUID PKs, audit fields, `deleted_at`,
+FORCE ROW LEVEL SECURITY scoped on `app.school_id`, cross-row
+consistency in `BEFORE INSERT/UPDATE` SECURITY DEFINER triggers.
+
+### Shape A: one row, mutated
+
+`student_skills` is the canonical state, not an append-only event log.
+Teachers tap a skill repeatedly during a lesson and we don't want every
+tap to write a row; the repository upsert and the audit-fields
+extension between them give us "who last set this status, when". If
+Sprint 10 wants full progression history we'd add a separate
+`student_skill_events` log alongside this table without disturbing the
+primary contract.
+
+### Cross-row consistency
+
+Two triggers:
+
+- `skills_consistency` — `skill.school_id = level.school_id`. The
+  curriculum a school maintains lives entirely inside that school's
+  level framework.
+- `student_skills_consistency` — `student_skill.school_id` agrees with
+  both `students.school_id` and `skills.school_id`. There is no
+  level-reachability rule here: the DB does not check that the student
+  is currently enrolled at the level the skill belongs to. That's an
+  app concern (a student can validly have skills marked for a level
+  they're working through but not yet enrolled in, or a level they've
+  graduated from). Keeping the DB permissive lets the UI evolve
+  without migration churn.
+
+### `markSkill` is idempotent and ignores no-op taps
+
+`studentRepository.markSkill` reads first, and if the stored status
+already matches, returns the existing row without writing. The intent
+is purely to avoid bumping `updated_at` / `updated_by` on every
+repeated tap — teachers will hit the same skill many times in a
+lesson, and we want the audit fields to reflect the last *change*, not
+the last touch. The same-status no-op deliberately ignores the `note`
+field; if Sprint 7 surfaces a "edit note without changing status" path,
+that should route through a separate update method rather than
+overloading the tap interaction.
+
+If the row doesn't exist or the status differs, `markSkill` upserts
+on the `(student_id, skill_id)` unique index, so a race between two
+teachers double-tapping a skill is safe — one wins the insert, the
+other lands on the update branch.
+
+### `listSkillsForLevel` is raw SQL on purpose
+
+`studentRepository.listSkillsForLevel(studentId, levelId)` returns one
+row per non-archived skill on the level: the student's stored status
+if a `student_skills` row exists, or a synthesised
+`status: not_introduced` placeholder if it doesn't. The
+synthesised rows carry `id: ""` and epoch timestamps so callers can
+distinguish them from real rows; persisting an edit through `markSkill`
+will create or update the real row.
+
+It's implemented as a single LEFT JOIN in `$queryRaw` rather than
+Prisma's `include` because the Sprint 7 progression view will hit this
+in a per-student-per-class hot loop. Two round trips (skills, then
+student_skills filtered to the studentId) is twice the latency we'd
+get from a single JOIN. RLS still applies to both tables — `app.school_id`
+filters them inside the JOIN, so a foreign-tenant `studentId` or
+`levelId` returns zero rows naturally.
+
+### `is_archived` is soft-retire, not delete
+
+When a school stops teaching a skill, archiving it leaves existing
+`student_skills` records intact and queryable, but hides it from the
+default `listByLevel` and `listSkillsForLevel` reads. This matters
+because progression history is one of the few things teachers and
+parents look back on years later — hard-deleting a skill would break
+old report cards. Archived skills are included by passing
+`includeArchived: true` to `listByLevel`.

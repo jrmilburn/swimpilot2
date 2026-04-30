@@ -67,3 +67,10 @@ export const AttendanceStatus = {
 } as const;
 export type AttendanceStatus =
   (typeof AttendanceStatus)[keyof typeof AttendanceStatus];
+
+export const SkillStatus = {
+  NotIntroduced: "not_introduced",
+  WorkingOn: "working_on",
+  Achieved: "achieved",
+} as const;
+export type SkillStatus = (typeof SkillStatus)[keyof typeof SkillStatus];

@@ -283,3 +283,55 @@ async `cookies()` store cannot `set` from a page or layout — only from
 server actions or route handlers. Middleware runs on every tenant
 request anyway and already extracts the slug, so writing the cookie
 on the response there is the cleanest seam.
+
+## Domain model — Families and Students
+
+### The aggregate
+
+A `Family` is the household billing identity (billing fields land in
+Sprint 3 / Chunk 5; the table is shaped to accept them without
+reshuffling). A `Student` belongs to exactly one family and is the unit
+of enrolment, attendance, and skill tracking. The relationship is
+1 family → many students; students don't move between families inside
+this MVP, so we model the FK as `students.family_id` with `ON DELETE
+RESTRICT`.
+
+### Domain types vs Prisma types
+
+`src/domain/types.ts` and `src/domain/enums.ts` are the canonical shapes
+the rest of the app sees. Repositories under `src/repositories/**` are
+the only place allowed to import `@prisma/client`, and each repository
+maps Prisma rows to the domain type via a `toFamily(row)` /
+`toStudent(row)` helper before returning. **Nothing outside
+`src/repositories/**` ever sees a Prisma-generated type** — neither the
+row types nor the enum types. The const-object pattern in
+`src/domain/enums.ts` (`StudentStatus`, `CommunicationPreference`)
+mirrors Prisma's enum string values byte-for-byte, so the mapper can
+cast at the boundary without a translation table.
+
+This boundary is the seam where future ORM swaps, additional read
+models, or computed/projected fields can land without callers having
+to change. Keep `Create…Input` / `Update…Input` types defined inside
+the repository file — they describe the repository's contract, not the
+domain entity, and don't need to be re-exported.
+
+### Denormalised `students.school_id`
+
+`students.school_id` duplicates `families.school_id`. This is on
+purpose: every RLS policy is keyed on `school_id`, and a denormalised
+column lets the policy filter without a JOIN against `families`. With
+RLS evaluated for every row of every query, that JOIN would land on
+the hot path of attendance, enrolment, and dashboard queries.
+
+The cost of denormalisation is a consistency invariant — a student's
+school must equal its family's school. We enforce it with a row-level
+trigger (`students_school_matches_family`) installed in the
+`20260430100000_add_families_and_students` migration. The trigger fires
+`BEFORE INSERT OR UPDATE OF school_id, family_id ON students` and
+raises `check_violation` if the two diverge. Application code never
+needs to repeat the check; the repository's `studentRepository.create`
+looks up the family inside the tenant transaction (so RLS scopes the
+lookup) and uses its `school_id` directly. The trigger is the
+authoritative line of defence — if a future code path forgets that
+rule, the database refuses the write rather than allowing a student to
+quietly land under the wrong tenant.

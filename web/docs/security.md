@@ -231,3 +231,36 @@ root per request render; there's no cross-request bleed.
   cross-tenant WHERE, INSERT WITH CHECK, UPDATE, and the unset-context
   case. Toggling RLS off on `locations` makes all five fail — that's
   the periodic sanity check that the tests test what they claim.
+
+## DB-layer invariants beyond RLS
+
+RLS scopes who sees what; some tenant-correctness invariants don't fit
+the RLS shape and live as triggers instead. Document them here so they
+aren't forgotten the next time someone touches the schema.
+
+### `students.school_id` must match `families.school_id`
+
+`students.school_id` is denormalised so RLS policies can filter without
+a JOIN (see `docs/architecture.md` → "Denormalised `students.school_id`"
+for the why). The pair is held consistent by a `BEFORE INSERT OR UPDATE
+OF school_id, family_id` trigger (`students_school_matches_family`)
+defined in the `20260430100000_add_families_and_students` migration.
+
+Why a DB-layer trigger instead of an application check:
+
+- A trigger fires on every write path — Prisma, raw SQL in seeds,
+  ad-hoc `psql` work, future bulk-import jobs. An application check
+  only fires from the code paths that remember to run it.
+- RLS already passes a row whose `school_id` matches the current
+  tenant context. If a buggy code path passed a `family_id` from a
+  different tenant whose `school_id` happened to match the current
+  context (it won't under RLS, but defence-in-depth), the trigger
+  still blocks the write.
+- Expressing this in Prisma's schema-level constructs would mean a
+  computed `CHECK` referencing another table, which Postgres doesn't
+  allow. A trigger is the natural fit.
+
+The trigger is `SECURITY DEFINER` so its `SELECT` against `families`
+isn't itself filtered by the same RLS policy that's gating the row
+being inserted. The function's body is a single lookup and a comparison
+— the surface area is intentionally tiny.

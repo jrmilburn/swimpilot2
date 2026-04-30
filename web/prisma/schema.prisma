@@ -17,6 +17,22 @@ enum Role {
   @@map("role")
 }
 
+enum CommunicationPreference {
+  email
+  sms
+  both
+
+  @@map("communication_preference")
+}
+
+enum StudentStatus {
+  active
+  paused
+  withdrawn
+
+  @@map("student_status")
+}
+
 model School {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   slug      String    @unique
@@ -31,6 +47,8 @@ model School {
 
   memberships Membership[]
   locations   Location[]
+  families    Family[]
+  students    Student[]
 
   @@map("schools")
 }
@@ -86,4 +104,56 @@ model Location {
 
   @@index([schoolId])
   @@map("locations")
+}
+
+model Family {
+  id                      String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId                String                  @map("school_id") @db.Uuid
+  primaryContactName      String                  @map("primary_contact_name")
+  primaryContactEmail     String                  @map("primary_contact_email")
+  primaryContactPhone     String?                 @map("primary_contact_phone")
+  addressLine1            String?                 @map("address_line_1")
+  addressLine2            String?                 @map("address_line_2")
+  suburb                  String?
+  state                   String?
+  postcode                String?
+  communicationPreference CommunicationPreference @default(email) @map("communication_preference")
+  notes                   String?
+  createdAt               DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy               String                  @map("created_by") @db.Uuid
+  updatedBy               String                  @map("updated_by") @db.Uuid
+  deletedAt               DateTime?               @map("deleted_at") @db.Timestamptz(6)
+
+  school   School    @relation(fields: [schoolId], references: [id])
+  students Student[]
+
+  @@index([schoolId])
+  @@index([schoolId, primaryContactEmail])
+  @@map("families")
+}
+
+model Student {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String        @map("school_id") @db.Uuid
+  familyId      String        @map("family_id") @db.Uuid
+  firstName     String        @map("first_name")
+  lastName      String        @map("last_name")
+  dateOfBirth   DateTime      @map("date_of_birth") @db.Date
+  medicalNotes  String?       @map("medical_notes")
+  photoUrl      String?       @map("photo_url")
+  status        StudentStatus @default(active)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy     String        @map("created_by") @db.Uuid
+  updatedBy     String        @map("updated_by") @db.Uuid
+  deletedAt     DateTime?     @map("deleted_at") @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id])
+  family Family @relation(fields: [familyId], references: [id])
+
+  @@index([schoolId])
+  @@index([familyId])
+  @@index([schoolId, familyId])
+  @@map("students")
 }

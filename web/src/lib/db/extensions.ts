@@ -6,6 +6,8 @@ const DOMAIN_MODELS = new Set<string>([
   "User",
   "Membership",
   "Location",
+  "Family",
+  "Student",
 ]);
 
 const WRITE_OPS = new Set<string>([

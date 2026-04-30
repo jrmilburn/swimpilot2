@@ -8,6 +8,11 @@ const DOMAIN_MODELS = new Set<string>([
   "Location",
   "Family",
   "Student",
+  "ClassLevel",
+  "Class",
+  "Enrolment",
+  "ClassSession",
+  "Attendance",
 ]);
 
 const WRITE_OPS = new Set<string>([

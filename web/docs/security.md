@@ -264,3 +264,38 @@ The trigger is `SECURITY DEFINER` so its `SELECT` against `families`
 isn't itself filtered by the same RLS policy that's gating the row
 being inserted. The function's body is a single lookup and a comparison
 — the surface area is intentionally tiny.
+
+### `classes.school_id` matches `locations`, `class_levels`, and assigned teacher's membership
+
+`classes` carries three FKs that each have a corresponding tenant
+constraint that RLS alone can't express: a class's `location_id` and
+`level_id` must point at rows of the same school, and (if the class has
+a teacher) the teacher must hold a non-deleted `memberships` row in the
+same school. Additionally, `classes.capacity` must not exceed the
+linked level's `ratio` (single-teacher MVP — see
+`docs/architecture.md`).
+
+These four invariants are enforced by `app_assert_class_consistency()`,
+fired by `classes_consistency BEFORE INSERT OR UPDATE OF
+school_id, location_id, level_id, teacher_id, capacity ON classes`,
+defined in `20260430110000_add_class_levels_and_classes`. Same
+properties as `students_school_matches_family`: SECURITY DEFINER, a
+narrow function body that does only the lookups and comparisons it
+needs, raises `check_violation` on divergence and `foreign_key_violation`
+when a referenced row is missing.
+
+The membership check enforces "is a member, not soft-deleted" — role
+is not checked. Role-based authz on who may be assigned as a teacher
+is an application-layer concern parked from Sprint 2. The trigger only
+guarantees that a teacher_id, when set, points at someone with
+standing in the school.
+
+One caveat to flag: the trigger does not fire on writes to
+`class_levels`, only on writes to `classes`. If a level's `ratio` is
+lowered below an existing class's `capacity`, the level update
+succeeds; the inconsistency is only caught on the next write to that
+class. Schedule-editing UI (Sprint 6) needs to surface the impact
+before allowing a ratio reduction. We chose not to add a defensive
+trigger on `class_levels.ratio` because the alternative — scanning
+every class on each level update — pays write cost for an invariant
+that only operator-driven flows can violate.

@@ -335,3 +335,236 @@ lookup) and uses its `school_id` directly. The trigger is the
 authoritative line of defence — if a future code path forgets that
 rule, the database refuses the write rather than allowing a student to
 quietly land under the wrong tenant.
+
+The same trigger pattern (BEFORE INSERT/UPDATE, SECURITY DEFINER, narrow
+function body, CHECK-violation on mismatch) is reused for class↔location,
+class↔level, and class↔teacher-membership invariants on the `classes`
+table — see "Domain model — Class levels and classes" below.
+
+## Domain model — Class levels and classes
+
+### Aggregates
+
+A `ClassLevel` defines a school's progression band — Infants, Beginner,
+Intermediate, Advanced — and carries the level's teacher-to-student
+ratio plus optional age bounds and a per-level "ready to progress"
+threshold (skill framework, Chunk 4, will hang off these). A `Class` is
+a recurring weekly slot identified by its `(level, day, time, location)`
+combination, with a single assigned teacher. There is no name field on
+the class — the operator-facing identity is the combination ("Wednesday
+4:30pm Infants at Riverside"), and a name would be redundant and prone
+to drift.
+
+### Single-teacher MVP
+
+A class carries `teacher_id` directly rather than going through a
+`class_teacher_history` join table. Reassignment is an in-place update
+on `classes.teacher_id`; the audit fields (`updated_by`, `updated_at`)
+record who made the change and when. We don't need historical
+teacher-of-record reporting in MVP — when Chunk 3 introduces
+`class_sessions`, each session row will capture the teacher who actually
+taught that occurrence, which is the load-bearing source of historical
+truth (substitute teachers, last-minute swaps). Until then, the audit
+fields cover the rare reassignment query.
+
+`teacher_id` is nullable. A class may briefly have no assigned teacher
+(between assignments, or pre-onboarding). We model that with `null`
+rather than a "TBD" sentinel user so the type system carries the
+absence — repositories return `teacherId: string | null` and callers
+deal with it explicitly.
+
+### Wall-clock time storage
+
+`classes.start_time` is a Postgres `time` (no date, no timezone) in the
+location's timezone. Recurring classes do not store UTC instants —
+"Mondays at 4:30pm" is a wall-clock concept; storing it as a UTC instant
+would mean rewriting every row twice a year for daylight savings. The
+location FK already carries the timezone (`locations.timezone`), so
+display code resolves wall-clock + timezone at render. Session-level
+instants will live on `class_sessions` (Chunk 3), where a specific date
+is involved.
+
+Prisma maps `@db.Time(0)` to a `DateTime` in TypeScript (with the date
+component anchored at 1970-01-01 UTC). The `classRepository` converts
+to/from an unambiguous `'HH:MM:SS'` string at the boundary — see the
+`timeToString` / `stringToTime` helpers in
+`src/repositories/classRepository.ts`. The domain `Class` type carries
+`startTime: string`, never a `Date`, so callers can't accidentally treat
+it as a calendar instant.
+
+### `capacity ≤ level.ratio`
+
+Because we're single-teacher for MVP, a class can never legitimately
+seat more students than the level's ratio. We enforce this at the DB
+layer in the same `classes_consistency` trigger that does the
+cross-school checks — looking up the level row is required for the
+school-match check anyway, so the ratio comparison costs nothing extra.
+Application repositories don't repeat the check; the trigger is the
+authoritative gate. `class_levels.ratio > 0` is a plain CHECK constraint
+on `class_levels`.
+
+(Note: the trigger fires on writes to `classes`, not on writes to
+`class_levels`. Lowering `class_levels.ratio` below an existing class's
+capacity will succeed; the next write to that class would fail. Sprint 6
+schedule editing will need to flag this when ratio is reduced.)
+
+### Cross-school consistency triggers
+
+The `classes_consistency` trigger
+(`20260430110000_add_class_levels_and_classes`) is a single
+`BEFORE INSERT OR UPDATE OF school_id, location_id, level_id,
+teacher_id, capacity` function that enforces:
+
+- `class.school_id = location.school_id`
+- `class.school_id = level.school_id`
+- `class.capacity ≤ level.ratio`
+- if `class.teacher_id IS NOT NULL`, a non-deleted `memberships` row
+  exists with `(school_id, user_id) = (class.school_id, class.teacher_id)`
+
+Bundled into one function rather than four because the level lookup is
+already needed for the school-match check, and a single trigger keeps
+the `BEFORE` execution order deterministic. Like
+`students_school_matches_family`, it is SECURITY DEFINER so the joins
+across `locations`, `class_levels`, and `memberships` aren't filtered by
+RLS — tenant isolation on `classes` itself is already done by the
+`WITH CHECK` policy; the trigger's only job is the cross-row shape RLS
+can't express.
+
+The membership check is intentionally "membership exists, not deleted"
+— role is not checked. Role-based authz (who can be assigned as a
+teacher) is parking-lot from Sprint 2.
+
+The DB-layer trigger pattern (student↔family, class↔location,
+class↔level, class↔teacher-membership) is now established. New
+cross-row consistency invariants in Sprint 3+ should follow the same
+shape: BEFORE INSERT/UPDATE OF the relevant columns, SECURITY DEFINER
+function, narrow body, raise with `ERRCODE = 'check_violation'` on
+divergence.
+
+## Domain model — Enrolments and sessions
+
+### The three tables
+
+Sprint 3 / Chunk 3 adds the load-bearing trio that connects students to
+classes and records what actually happened:
+
+- `enrolments` — a student's standing booking on a class, with a
+  frequency (`weekly`, `fortnightly_a`, `fortnightly_b`, `one_off`),
+  start/end dates, an optional pause window, and a denormalised
+  `status` (`active` / `paused` / `withdrawn`).
+- `class_sessions` — one row per (class, calendar date) the class
+  actually runs. Created lazily on first reference, never up front.
+- `attendance` — one row per (session, student), with status `present`
+  / `absent` / `late` and an optional note.
+
+All three follow the established Sprint 1 conventions: UUID PKs, audit
+fields, `deleted_at`, FORCE ROW LEVEL SECURITY scoped on
+`app.school_id`, cross-row consistency enforced by `BEFORE
+INSERT/UPDATE` SECURITY DEFINER triggers.
+
+### Status is denormalised; dates are the source of truth
+
+Enrolment date columns (`start_date`, `end_date`, `pause_from`,
+`pause_to`) are the source of truth. `status` is a denormalised
+projection of those dates that we store for query performance — listing
+"active enrolments" should be an index seek, not a per-row date
+calculation. The DB enforces only **structural** invariants:
+
+- `pause_from IS NULL` ↔ `pause_to IS NULL` (both or neither)
+- `pause_to >= pause_from`
+- `end_date >= start_date`
+- `frequency = 'one_off'` ⇒ `end_date = start_date`
+- `status = 'paused'` ⇒ `pause_from IS NOT NULL`
+
+It deliberately does **not** check `now()` against the pause window or
+end_date. Two reasons: (1) `now()`-dependent CHECK constraints make the
+table hostile to time travel in tests and to backdated edits; (2) the
+application owns transitions anyway, via explicit
+`pause` / `resume` / `withdraw` repository methods. Those methods set
+both the dates and the matching status atomically, and the structural
+constraints catch anyone trying to half-write the pair.
+
+### Lazy session materialisation
+
+`class_sessions` rows are written on first reference — when someone
+marks attendance, cancels a session, or assigns a substitute teacher.
+Pre-materialising the next 12 weeks for every class would burn rows
+that may never be touched (a paused enrolment, a class with no marks
+yet) and creates a churn hotspot every Monday morning when the next
+week rolls in.
+
+`classSessionRepository.getOrCreateSession(tx, classId, sessionDate)`
+is the only writer. It is idempotent via the unique
+`(class_id, session_date)` constraint: if two requests race, one wins
+the insert and the loser catches `P2002` and falls through to a second
+SELECT. Callers don't need to coordinate.
+
+The repository also enforces a domain invariant the DB can't:
+**session_date must fall on the class's `day_of_week`**. The trigger
+`class_sessions_consistency` maps Postgres `EXTRACT(DOW)` (Sunday=0)
+back to our `week_day` enum (Monday-first) and rejects mismatches with
+`check_violation`. So `getOrCreateSession` never accepts a
+"Wednesday" date for a Tuesday class.
+
+### Teacher snapshotting
+
+`class_sessions.teacher_id` is a snapshot of the parent class's
+`teacher_id` at session creation time. Once the row exists, reassigning
+the class's teacher does **not** propagate to existing sessions. This
+is by design: a session row is the historical record of who taught (or
+was scheduled to teach) that specific occurrence, and rewriting it
+would erase that history. Substitute-teacher overrides in Sprint 6 will
+update the session's `teacher_id` directly — at that point the session
+row is the single load-bearing source of who taught.
+
+A consequence: backfilling sessions through the repository with the
+clock turned forward will pick up whichever teacher is on the class
+*right now*, not the one who was assigned at the original session
+date. If you ever need historical reassignment fidelity, do it at write
+time — once the row is created, the snapshot is frozen.
+
+### Attendance: idempotent upsert, with a domain guard
+
+`attendanceRepository.mark` is an upsert keyed on
+`(class_session_id, student_id)`. Marking a student twice replaces the
+status — there is no append-only audit of every mark in MVP, only the
+final value (and the audit-fields extension stamps `updated_by` /
+`updated_at` to record who flipped it). If we need full mark history
+later, that's a Sprint 8+ concern; we'd add a separate
+`attendance_events` table rather than mutating this contract.
+
+`mark` does an explicit pre-check for cancelled sessions and raises a
+typed `ValidationError` rather than relying on a DB constraint. The
+reasoning: cancellation is a domain semantic ("this session didn't
+happen, so attendance against it is meaningless"), not a structural
+invariant — it's the kind of thing a UI wants to surface as a
+recoverable user error, not a 500. Auto-completion of a session when
+all enrolled students are marked is intentionally *not* done on the
+write path: it would force every `mark` call to lock and re-read the
+enrolment list, undoing the small-write benefit of the upsert. Manual
+`markCompleted` is a separate, explicit action.
+
+Attendance carries a denormalised `student_id` alongside `enrolment_id`
+so the row is interpretable even if the enrolment is later withdrawn or
+moved between families. The trigger
+`app_assert_attendance_consistency` enforces
+`enrolment.student_id = attendance.student_id` so the two cannot drift,
+and that the school_id agrees across enrolment, session, and student.
+
+### Date expansion is a pure function
+
+`src/domain/enrolment.ts` exports `expandEnrolmentDates(enrolment,
+classDayOfWeek, range)` — a pure function with no DB access and no
+implicit `now()`. Given an enrolment, the parent class's day-of-week,
+and a calendar range, it returns the dates the enrolment "qualifies"
+for: the weekly cadence, the fortnightly parity (anchored to the
+enrolment's `start_date`), or the single date for a one-off. Pause
+windows and end_date short-circuit it inclusively.
+
+This is the seam roster generation, schedule UIs, and "next session
+for student X" all share. Because it has no side effects, it is fully
+unit-testable (`tests/unit/expandEnrolmentDates.test.ts`) and can be
+composed with `classSessionRepository.listByClass` to merge expected
+dates with materialised session rows. It must stay pure — if you find
+yourself wanting to call the DB or read the wall clock from inside it,
+move that decision out to the caller and pass the date range in.

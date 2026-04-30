@@ -17,3 +17,53 @@ export const CommunicationPreference = {
 } as const;
 export type CommunicationPreference =
   (typeof CommunicationPreference)[keyof typeof CommunicationPreference];
+
+export const WeekDay = {
+  Monday: "monday",
+  Tuesday: "tuesday",
+  Wednesday: "wednesday",
+  Thursday: "thursday",
+  Friday: "friday",
+  Saturday: "saturday",
+  Sunday: "sunday",
+} as const;
+export type WeekDay = (typeof WeekDay)[keyof typeof WeekDay];
+
+export const ClassStatus = {
+  Active: "active",
+  Cancelled: "cancelled",
+} as const;
+export type ClassStatus = (typeof ClassStatus)[keyof typeof ClassStatus];
+
+export const EnrolmentFrequency = {
+  Weekly: "weekly",
+  FortnightlyA: "fortnightly_a",
+  FortnightlyB: "fortnightly_b",
+  OneOff: "one_off",
+} as const;
+export type EnrolmentFrequency =
+  (typeof EnrolmentFrequency)[keyof typeof EnrolmentFrequency];
+
+export const EnrolmentStatus = {
+  Active: "active",
+  Paused: "paused",
+  Withdrawn: "withdrawn",
+} as const;
+export type EnrolmentStatus =
+  (typeof EnrolmentStatus)[keyof typeof EnrolmentStatus];
+
+export const ClassSessionStatus = {
+  Scheduled: "scheduled",
+  Cancelled: "cancelled",
+  Completed: "completed",
+} as const;
+export type ClassSessionStatus =
+  (typeof ClassSessionStatus)[keyof typeof ClassSessionStatus];
+
+export const AttendanceStatus = {
+  Present: "present",
+  Absent: "absent",
+  Late: "late",
+} as const;
+export type AttendanceStatus =
+  (typeof AttendanceStatus)[keyof typeof AttendanceStatus];

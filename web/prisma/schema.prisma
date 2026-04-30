@@ -33,6 +33,58 @@ enum StudentStatus {
   @@map("student_status")
 }
 
+enum WeekDay {
+  monday
+  tuesday
+  wednesday
+  thursday
+  friday
+  saturday
+  sunday
+
+  @@map("week_day")
+}
+
+enum ClassStatus {
+  active
+  cancelled
+
+  @@map("class_status")
+}
+
+enum EnrolmentFrequency {
+  weekly
+  fortnightly_a
+  fortnightly_b
+  one_off
+
+  @@map("enrolment_frequency")
+}
+
+enum EnrolmentStatus {
+  active
+  paused
+  withdrawn
+
+  @@map("enrolment_status")
+}
+
+enum ClassSessionStatus {
+  scheduled
+  cancelled
+  completed
+
+  @@map("class_session_status")
+}
+
+enum AttendanceStatus {
+  present
+  absent
+  late
+
+  @@map("attendance_status")
+}
+
 model School {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   slug      String    @unique
@@ -45,10 +97,15 @@ model School {
   updatedBy String    @map("updated_by") @db.Uuid
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  memberships Membership[]
-  locations   Location[]
-  families    Family[]
-  students    Student[]
+  memberships    Membership[]
+  locations      Location[]
+  families       Family[]
+  students       Student[]
+  classLevels    ClassLevel[]
+  classes        Class[]
+  enrolments     Enrolment[]
+  classSessions  ClassSession[]
+  attendance     Attendance[]
 
   @@map("schools")
 }
@@ -64,7 +121,9 @@ model User {
   updatedBy String?   @map("updated_by") @db.Uuid
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  memberships Membership[]
+  memberships    Membership[]
+  taughtClasses  Class[]        @relation("ClassTeacher")
+  taughtSessions ClassSession[] @relation("ClassSessionTeacher")
 
   @@map("users")
 }
@@ -100,7 +159,8 @@ model Location {
   updatedBy String    @map("updated_by") @db.Uuid
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  school School @relation(fields: [schoolId], references: [id])
+  school  School  @relation(fields: [schoolId], references: [id])
+  classes Class[]
 
   @@index([schoolId])
   @@map("locations")
@@ -149,11 +209,148 @@ model Student {
   updatedBy     String        @map("updated_by") @db.Uuid
   deletedAt     DateTime?     @map("deleted_at") @db.Timestamptz(6)
 
-  school School @relation(fields: [schoolId], references: [id])
-  family Family @relation(fields: [familyId], references: [id])
+  school     School       @relation(fields: [schoolId], references: [id])
+  family     Family       @relation(fields: [familyId], references: [id])
+  enrolments Enrolment[]
+  attendance Attendance[]
 
   @@index([schoolId])
   @@index([familyId])
   @@index([schoolId, familyId])
   @@map("students")
+}
+
+model ClassLevel {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId                    String    @map("school_id") @db.Uuid
+  name                        String
+  description                 String?
+  ratio                       Int
+  orderIndex                  Int       @map("order_index")
+  minAgeMonths                Int?      @map("min_age_months")
+  maxAgeMonths                Int?      @map("max_age_months")
+  defaultProgressionThreshold Int       @default(80) @map("default_progression_threshold")
+  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy                   String    @map("created_by") @db.Uuid
+  updatedBy                   String    @map("updated_by") @db.Uuid
+  deletedAt                   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  school  School  @relation(fields: [schoolId], references: [id])
+  classes Class[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@map("class_levels")
+}
+
+model Class {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String      @map("school_id") @db.Uuid
+  locationId      String      @map("location_id") @db.Uuid
+  levelId         String      @map("level_id") @db.Uuid
+  teacherId       String?     @map("teacher_id") @db.Uuid
+  dayOfWeek       WeekDay     @map("day_of_week")
+  startTime       DateTime    @map("start_time") @db.Time(0)
+  durationMinutes Int         @map("duration_minutes")
+  capacity        Int
+  status          ClassStatus @default(active)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       String      @map("created_by") @db.Uuid
+  updatedBy       String      @map("updated_by") @db.Uuid
+  deletedAt       DateTime?   @map("deleted_at") @db.Timestamptz(6)
+
+  school     School         @relation(fields: [schoolId], references: [id])
+  location   Location       @relation(fields: [locationId], references: [id])
+  level      ClassLevel     @relation(fields: [levelId], references: [id])
+  teacher    User?          @relation("ClassTeacher", fields: [teacherId], references: [id])
+  enrolments Enrolment[]
+  sessions   ClassSession[]
+
+  @@index([schoolId, locationId])
+  @@index([schoolId, levelId])
+  @@index([schoolId, teacherId])
+  @@index([schoolId, dayOfWeek, startTime])
+  @@map("classes")
+}
+
+model Enrolment {
+  id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String              @map("school_id") @db.Uuid
+  studentId  String              @map("student_id") @db.Uuid
+  classId    String              @map("class_id") @db.Uuid
+  frequency  EnrolmentFrequency
+  startDate  DateTime            @map("start_date") @db.Date
+  endDate    DateTime?           @map("end_date") @db.Date
+  pauseFrom  DateTime?           @map("pause_from") @db.Date
+  pauseTo    DateTime?           @map("pause_to") @db.Date
+  status     EnrolmentStatus     @default(active)
+  notes      String?
+  createdAt  DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  String              @map("created_by") @db.Uuid
+  updatedBy  String              @map("updated_by") @db.Uuid
+  deletedAt  DateTime?           @map("deleted_at") @db.Timestamptz(6)
+
+  school     School       @relation(fields: [schoolId], references: [id])
+  student    Student      @relation(fields: [studentId], references: [id])
+  class      Class        @relation(fields: [classId], references: [id])
+  attendance Attendance[]
+
+  @@index([schoolId, studentId])
+  @@index([schoolId, classId])
+  @@index([schoolId, status])
+  @@map("enrolments")
+}
+
+model ClassSession {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId           String              @map("school_id") @db.Uuid
+  classId            String              @map("class_id") @db.Uuid
+  sessionDate        DateTime            @map("session_date") @db.Date
+  teacherId          String?             @map("teacher_id") @db.Uuid
+  status             ClassSessionStatus  @default(scheduled)
+  cancellationReason String?             @map("cancellation_reason")
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy          String              @map("created_by") @db.Uuid
+  updatedBy          String              @map("updated_by") @db.Uuid
+  deletedAt          DateTime?           @map("deleted_at") @db.Timestamptz(6)
+
+  school     School       @relation(fields: [schoolId], references: [id])
+  class      Class        @relation(fields: [classId], references: [id])
+  teacher    User?        @relation("ClassSessionTeacher", fields: [teacherId], references: [id])
+  attendance Attendance[]
+
+  @@unique([classId, sessionDate])
+  @@index([schoolId, sessionDate])
+  @@index([schoolId, classId])
+  @@map("class_sessions")
+}
+
+model Attendance {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String           @map("school_id") @db.Uuid
+  classSessionId  String           @map("class_session_id") @db.Uuid
+  enrolmentId     String           @map("enrolment_id") @db.Uuid
+  studentId       String           @map("student_id") @db.Uuid
+  status          AttendanceStatus
+  note            String?
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       String           @map("created_by") @db.Uuid
+  updatedBy       String           @map("updated_by") @db.Uuid
+  deletedAt       DateTime?        @map("deleted_at") @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id])
+  classSession ClassSession @relation(fields: [classSessionId], references: [id])
+  enrolment    Enrolment    @relation(fields: [enrolmentId], references: [id])
+  student      Student      @relation(fields: [studentId], references: [id])
+
+  @@unique([classSessionId, studentId])
+  @@index([schoolId, classSessionId])
+  @@index([schoolId, studentId])
+  @@index([schoolId, enrolmentId])
+  @@map("attendance")
 }

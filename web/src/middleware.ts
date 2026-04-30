@@ -16,6 +16,8 @@ const isPublicRoute = createRouteMatcher([
 ]);
 
 const TENANT_PATH = /^\/s\/([^/]+)(?:\/|$)/;
+const LAST_SCHOOL_COOKIE = "swp_last_school";
+const LAST_SCHOOL_MAX_AGE = 60 * 60 * 24 * 365; // ~1 year
 
 export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
@@ -30,9 +32,24 @@ export default clerkMiddleware(async (auth, request) => {
   // tenant; never trust a slug coming from the request body.
   const match = TENANT_PATH.exec(request.nextUrl.pathname);
   if (match) {
+    const slug = match[1]!;
     const requestHeaders = new Headers(request.headers);
-    requestHeaders.set("x-school-slug", match[1]!);
-    return NextResponse.next({ request: { headers: requestHeaders } });
+    requestHeaders.set("x-school-slug", slug);
+    const response = NextResponse.next({
+      request: { headers: requestHeaders },
+    });
+    // UX hint only — the landing page reads this to short-circuit the
+    // picker for users with multiple memberships. Not auth: requireTenant
+    // and RLS still gate access. The slug here came from the URL the user
+    // already navigated to successfully (or will get a 404 from); writing
+    // it on every tenant request keeps the value fresh.
+    response.cookies.set(LAST_SCHOOL_COOKIE, slug, {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: LAST_SCHOOL_MAX_AGE,
+    });
+    return response;
   }
 });
 

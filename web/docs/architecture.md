@@ -231,3 +231,55 @@ Anything that can't be tied to a single school — admin tooling, webhooks (e.g.
 - per-action rate limiting
 - request metrics / tracing spans
 - role-based authorisation policies (the `role` is already in `TenantContext`)
+
+## School switcher and last-school cookie
+
+Users can be members of multiple schools. The header in
+`src/app/s/[schoolSlug]/layout.tsx` mounts a `<SchoolSwitcher>` server
+component (`src/app/s/[schoolSlug]/_components/SchoolSwitcher.tsx`)
+that lists every other school the current user belongs to and links to
+`/s/<slug>` for each.
+
+### Where memberships come from
+
+`SchoolSwitcher` calls `listUserMemberships(userId)` from
+`src/repositories/tenantRepository.ts`. That repository function runs
+the `app_list_user_memberships(uuid)` SECURITY DEFINER function — the
+same RLS-bypass seam used by the `/` landing page. We deliberately do
+**not** introduce a service-role Prisma client to read memberships
+unscoped: SECURITY DEFINER keeps the surface area to a known
+projection. See `docs/security.md` ("Tenant resolution: a deliberate
+RLS bypass") for the full justification.
+
+The component is a server component — no client JS, just a
+`<details>`/`<summary>` dropdown — so the membership list never leaves
+the server until it's already filtered to the current user.
+
+### The `swp_last_school` cookie
+
+A signed-in user with multiple memberships landing on `/` would see
+the picker every time. The `swp_last_school` cookie short-circuits
+that: it stores the slug of the most recent tenant the user visited,
+and `/` redirects straight there if the slug still matches one of the
+user's memberships.
+
+| Concern        | Decision                                                  |
+| -------------- | --------------------------------------------------------- |
+| Name           | `swp_last_school`                                         |
+| Value          | the slug, plain string — no JSON, no signing              |
+| Attributes     | `path=/`, `httpOnly`, `sameSite=lax`, `max-age=~1y`       |
+| Written        | in `src/middleware.ts` on every `/s/<slug>/...` request   |
+| Read           | in `src/app/page.tsx` (the `/` landing)                   |
+
+The cookie is a **UX hint**, not auth. `requireTenant()` and RLS still
+gate access; the worst a stale or forged cookie can do is point the
+landing page at a slug the user is no longer a member of, which the
+landing page guards against by checking the cookie value against the
+actual memberships before redirecting. If the cookie names a slug the
+user doesn't belong to, `/` falls through to the picker instead.
+
+Middleware is the right place to write the cookie because Next 16's
+async `cookies()` store cannot `set` from a page or layout — only from
+server actions or route handlers. Middleware runs on every tenant
+request anyway and already extracts the slug, so writing the cookie
+on the response there is the cleanest seam.

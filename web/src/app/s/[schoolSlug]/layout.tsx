@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SignOutButton } from "@clerk/nextjs";
 import { requireTenant } from "@/lib/auth/requireTenant";
+import { SchoolSwitcher } from "./_components/SchoolSwitcher";
 
 export default async function TenantLayout({
   children,
@@ -13,7 +14,7 @@ export default async function TenantLayout({
   // requireTenant() is wrapped in React.cache() so this work is shared
   // with whatever page is rendered below us — only one DB lookup per
   // request, even though the layout and the page both call it.
-  const { schoolName, role } = await requireTenant(schoolSlug);
+  const { userId, schoolName, role } = await requireTenant(schoolSlug);
 
   return (
     <div className="flex min-h-full flex-col bg-zinc-50 font-sans dark:bg-black">
@@ -22,19 +23,12 @@ export default async function TenantLayout({
           <Link href={`/s/${schoolSlug}`} className="text-lg font-semibold">
             {schoolName}
           </Link>
-          {/* School switcher placeholder — wired up in the next sprint. */}
           <span className="text-xs uppercase tracking-wide text-zinc-500">
             {role}
           </span>
         </div>
         <div className="flex items-center gap-3">
-          {/* TODO: replace with school switcher dropdown. */}
-          <Link
-            href="/"
-            className="text-sm text-zinc-500 underline-offset-2 hover:underline"
-          >
-            Switch school
-          </Link>
+          <SchoolSwitcher currentSlug={schoolSlug} userId={userId} />
           <SignOutButton>
             <button className="rounded-full border px-3 py-1.5 text-sm">
               Sign out

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { SignOutButton } from "@clerk/nextjs";
@@ -8,6 +9,8 @@ import {
   type User,
 } from "@/repositories/userRepository";
 import { listUserMemberships } from "@/repositories/tenantRepository";
+
+const LAST_SCHOOL_COOKIE = "swp_last_school";
 
 export default async function Home() {
   const { userId: clerkUserId } = await auth();
@@ -23,6 +26,17 @@ export default async function Home() {
   }
   if (memberships.length === 1) {
     redirect(`/s/${memberships[0]!.slug}`);
+  }
+
+  // Multi-membership: if the user has a last-school cookie pointing at a
+  // school they're still a member of, skip the picker. The cookie is a UX
+  // hint only — confirm the slug against actual memberships before trusting
+  // it, so a stale cookie can't redirect into a school the user no longer
+  // belongs to.
+  const cookieStore = await cookies();
+  const lastSlug = cookieStore.get(LAST_SCHOOL_COOKIE)?.value;
+  if (lastSlug && memberships.some((m) => m.slug === lastSlug)) {
+    redirect(`/s/${lastSlug}`);
   }
 
   return <SchoolPicker memberships={memberships} email={dbUser.email} />;

@@ -19,11 +19,13 @@ import type {
   EnrolmentFrequency,
   EnrolmentStatus,
   InvoiceStatus,
+  OnboardingStep,
   PaymentMethodType,
   SkillStatus,
   StudentStatus,
   WeekDay,
 } from "./enums";
+import type { StepStatusMap } from "./onboarding";
 
 export interface Family {
   id: string;
@@ -206,6 +208,16 @@ export interface InvoiceLine {
   gstAmountCents: number;
   quantity: number;
   lineTotalCents: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface OnboardingProgress {
+  schoolId: string;
+  currentStep: OnboardingStep;
+  stepStatuses: StepStatusMap;
+  lastActivityAt: Date;
+  completedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

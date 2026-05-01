@@ -1,5 +1,6 @@
 import { Role } from "@prisma/client";
 import { prisma } from "../lib/db/client";
+import { OnboardingStep } from "../domain/enums";
 
 // Re-export Role so callers outside the repository layer can use the
 // domain role enum without violating the no-restricted-imports rule that
@@ -98,4 +99,45 @@ export async function listUserMemberships(
     schoolName: r.name,
     role: r.role,
   }));
+}
+
+export type OnboardingRedirectState = {
+  currentStep: OnboardingStep;
+  completedAt: Date | null;
+};
+
+type OnboardingStateRow = {
+  current_step: OnboardingStep;
+  completed_at: Date | null;
+};
+
+/**
+ * Read just enough of `onboarding_progress` to drive the / landing
+ * page's redirect: the school's current wizard step and whether the
+ * wizard has been completed.
+ *
+ * Same chicken-and-egg as `lookupTenant`: the / landing page resolves
+ * the user's primary school slug, then needs to know whether that
+ * school is mid-wizard, all BEFORE any tenant context is open. RLS
+ * would return zero rows on a direct read; we go through the narrow
+ * `app_get_onboarding_state(uuid)` SECURITY DEFINER function instead.
+ *
+ * Returns `null` if no row exists for that school. Callers treat that
+ * as "no redirect target" — in practice the AFTER INSERT trigger on
+ * `schools` ensures every school has a row, so seeing null here is a
+ * trigger-misfire signal.
+ */
+export async function getOnboardingRedirectState(
+  schoolId: string,
+): Promise<OnboardingRedirectState | null> {
+  const rows = await prisma.$queryRaw<OnboardingStateRow[]>`
+    SELECT current_step, completed_at
+    FROM app_get_onboarding_state(${schoolId}::uuid)
+  `;
+  if (rows.length === 0) return null;
+  const row = rows[0]!;
+  return {
+    currentStep: row.current_step,
+    completedAt: row.completed_at,
+  };
 }

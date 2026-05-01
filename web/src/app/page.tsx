@@ -8,7 +8,11 @@ import {
   upsertFromClerk,
   type User,
 } from "@/repositories/userRepository";
-import { listUserMemberships } from "@/repositories/tenantRepository";
+import {
+  getOnboardingRedirectState,
+  listUserMemberships,
+  type UserMembership,
+} from "@/repositories/tenantRepository";
 
 const LAST_SCHOOL_COOKIE = "swp_last_school";
 
@@ -25,7 +29,7 @@ export default async function Home() {
     return <NoSchoolsYet email={dbUser.email} />;
   }
   if (memberships.length === 1) {
-    redirect(`/s/${memberships[0]!.slug}`);
+    await redirectToSchool(memberships[0]!);
   }
 
   // Multi-membership: if the user has a last-school cookie pointing at a
@@ -35,11 +39,34 @@ export default async function Home() {
   // belongs to.
   const cookieStore = await cookies();
   const lastSlug = cookieStore.get(LAST_SCHOOL_COOKIE)?.value;
-  if (lastSlug && memberships.some((m) => m.slug === lastSlug)) {
-    redirect(`/s/${lastSlug}`);
+  if (lastSlug) {
+    const match = memberships.find((m) => m.slug === lastSlug);
+    if (match) {
+      await redirectToSchool(match);
+    }
   }
 
   return <SchoolPicker memberships={memberships} email={dbUser.email} />;
+}
+
+// Redirect a user into the right entry-point for their school. Schools
+// whose `onboarding_progress.completed_at` is null go to the wizard at
+// `/s/<slug>/onboarding/<currentStep>`; complete schools go to the
+// dashboard at `/s/<slug>`. The redirect state is read via the
+// SECURITY DEFINER `app_get_onboarding_state` function before any
+// tenant context is open — same seam as `app_resolve_tenant`.
+//
+// If the onboarding row is missing (the AFTER INSERT trigger should make
+// that impossible), default to the dashboard rather than throwing — the /
+// landing page is the wrong place to surface that bug, and falling
+// through to the dashboard means existing users still get somewhere
+// useful while we investigate.
+async function redirectToSchool(membership: UserMembership): Promise<never> {
+  const state = await getOnboardingRedirectState(membership.schoolId);
+  if (state && state.completedAt === null) {
+    redirect(`/s/${membership.slug}/onboarding/${state.currentStep}`);
+  }
+  redirect(`/s/${membership.slug}`);
 }
 
 async function resolveDbUser(clerkUserId: string): Promise<User> {

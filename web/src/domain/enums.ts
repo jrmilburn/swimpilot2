@@ -122,3 +122,26 @@ export const CreditStatus = {
   Void: "void",
 } as const;
 export type CreditStatus = (typeof CreditStatus)[keyof typeof CreditStatus];
+
+export const OnboardingStep = {
+  Profile: "profile",
+  Locations: "locations",
+  Levels: "levels",
+  Skills: "skills",
+  Classes: "classes",
+  Teachers: "teachers",
+  Billing: "billing",
+  Channels: "channels",
+  Import: "import",
+  Done: "done",
+} as const;
+export type OnboardingStep = (typeof OnboardingStep)[keyof typeof OnboardingStep];
+
+export const OnboardingStepStatus = {
+  NotStarted: "not_started",
+  InProgress: "in_progress",
+  Completed: "completed",
+  Skipped: "skipped",
+} as const;
+export type OnboardingStepStatus =
+  (typeof OnboardingStepStatus)[keyof typeof OnboardingStepStatus];

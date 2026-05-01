@@ -151,6 +151,30 @@ enum AiCallStatus {
   @@map("ai_call_status")
 }
 
+enum OnboardingStep {
+  profile
+  locations
+  levels
+  skills
+  classes
+  teachers
+  billing
+  channels
+  import
+  done
+
+  @@map("onboarding_step")
+}
+
+enum OnboardingStepStatus {
+  not_started
+  in_progress
+  completed
+  skipped
+
+  @@map("onboarding_step_status")
+}
+
 model School {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   slug      String    @unique
@@ -181,6 +205,7 @@ model School {
   credits         Credit[]
   billingCounter  BillingCounter?
   aiCalls         AiCall[]
+  onboardingProgress OnboardingProgress?
 
   @@map("schools")
 }
@@ -634,6 +659,31 @@ model AiCall {
   @@index([schoolId, feature, createdAt(sort: Desc)])
   @@index([schoolId, userId])
   @@map("ai_calls")
+}
+
+// One row per school recording position in the onboarding wizard. The /
+// landing redirect reads `current_step` / `completed_at` via the
+// SECURITY DEFINER `app_get_onboarding_state` function before any tenant
+// context is open. Materialised by an AFTER INSERT trigger on `schools`
+// (see the 20260501130000_add_onboarding_progress migration); there is no
+// app-side path that creates this row directly.
+model OnboardingProgress {
+  schoolId       String               @id @map("school_id") @db.Uuid
+  currentStep    OnboardingStep       @default(profile) @map("current_step")
+  // JSONB keyed by OnboardingStep value (excluding `done`), valued by
+  // OnboardingStepStatus. Repository owns parsing/validating the shape.
+  stepStatuses   Json                 @default("{}") @map("step_statuses")
+  lastActivityAt DateTime             @default(now()) @map("last_activity_at") @db.Timestamptz(6)
+  completedAt    DateTime?            @map("completed_at") @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String               @map("created_by") @db.Uuid
+  updatedBy      String               @map("updated_by") @db.Uuid
+  deletedAt      DateTime?            @map("deleted_at") @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id])
+
+  @@map("onboarding_progress")
 }
 
 // Per-school sequential counter used by Sprint 8 to allocate human-readable

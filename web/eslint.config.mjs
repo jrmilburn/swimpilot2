@@ -2,7 +2,7 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
-const prismaImportRule = [
+const restrictedImportsRule = [
   "error",
   {
     patterns: [
@@ -29,6 +29,11 @@ const prismaImportRule = [
         message:
           "The Prisma client may only be imported from src/lib/db/** or src/repositories/**. Use a repository instead.",
       },
+      {
+        group: ["@anthropic-ai/sdk", "@anthropic-ai/sdk/*"],
+        message:
+          "The Anthropic SDK may only be imported from src/ai/**. Call AI features via withAI() from src/ai/withAI instead.",
+      },
     ],
   },
 ];
@@ -47,11 +52,18 @@ const eslintConfig = defineConfig([
   ]),
   {
     rules: {
-      "no-restricted-imports": prismaImportRule,
+      "no-restricted-imports": restrictedImportsRule,
     },
   },
+  // Repositories and lib/db are allowed to import Prisma. The AI scaffold
+  // is allowed to import @anthropic-ai/sdk. Tests can do both.
   {
-    files: ["src/lib/db/**", "src/repositories/**", "tests/**"],
+    files: [
+      "src/lib/db/**",
+      "src/repositories/**",
+      "src/ai/**",
+      "tests/**",
+    ],
     rules: {
       "no-restricted-imports": "off",
     },

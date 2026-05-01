@@ -144,6 +144,13 @@ enum CreditStatus {
   @@map("credit_status")
 }
 
+enum AiCallStatus {
+  ok
+  error
+
+  @@map("ai_call_status")
+}
+
 model School {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   slug      String    @unique
@@ -173,6 +180,7 @@ model School {
   invoiceLines    InvoiceLine[]
   credits         Credit[]
   billingCounter  BillingCounter?
+  aiCalls         AiCall[]
 
   @@map("schools")
 }
@@ -595,6 +603,37 @@ model Credit {
   @@index([schoolId, familyId])
   @@index([schoolId, expiresAt])
   @@map("credits")
+}
+
+// One row per AI call made through `withAI`. Inputs are hashed, never
+// stored — privacy-first per the Sprint 3 / Chunk 6 plan. user_id is not
+// FK'd because we want log rows to survive user deletion.
+model AiCall {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String       @map("school_id") @db.Uuid
+  userId        String?      @map("user_id") @db.Uuid
+  feature       String
+  promptName    String       @map("prompt_name")
+  promptVersion Int          @default(1) @map("prompt_version")
+  model         String
+  inputHash     String       @map("input_hash")
+  inputTokens   Int?         @map("input_tokens")
+  outputTokens  Int?         @map("output_tokens")
+  latencyMs     Int          @map("latency_ms")
+  status        AiCallStatus
+  errorMessage  String?      @map("error_message")
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy     String       @map("created_by") @db.Uuid
+  updatedBy     String       @map("updated_by") @db.Uuid
+  deletedAt     DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id])
+
+  @@index([schoolId, createdAt(sort: Desc)])
+  @@index([schoolId, feature, createdAt(sort: Desc)])
+  @@index([schoolId, userId])
+  @@map("ai_calls")
 }
 
 // Per-school sequential counter used by Sprint 8 to allocate human-readable

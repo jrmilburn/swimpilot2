@@ -784,3 +784,227 @@ which is simpler at that time.
 All of the above belong to Sprint 8 and would be premature here. The
 schema, triggers, CHECKs, and reads are everything you need to *write
 into* and *render*, but nothing that produces or moves money.
+
+## AI scaffold
+
+### What this is
+
+A thin, instrumented pathway from feature code to Claude. Sprint 3 /
+Chunk 6 ships only the plumbing — Sprint 5 (CSV column-mapping during
+onboarding) and Sprint 10 (inbox classification + reply suggestions)
+are the first features to ride on it. There is no workflow engine, no
+prompt framework, no eval harness, no retry layer, no streaming, no
+caching, and no output validation in this scaffold. Each of those is a
+feature concern that will land where it's actually needed.
+
+### Folder layout
+
+```
+src/ai/
+  client.ts            # Anthropic SDK singleton
+  withAI.ts            # The wrapper — tenant context, hashing, logging
+  types.ts             # PromptModule, PromptResult, AICallContext
+  prompts/
+    system/
+      family-summary.ts   # canonical example
+    onboarding/        # Sprint 5 will add files here
+    inbox/             # Sprint 10 will add files here
+```
+
+The `prompts/<feature>/<name>.ts` convention groups by product area.
+`system` is for cross-cutting infra prompts (the smoke prompt lives
+here). Sprint 5 adds `onboarding/csv-column-map.ts`. Sprint 10 adds
+`inbox/classify.ts` and `inbox/suggest-reply.ts`. Each feature folder
+owns its own prompts; nothing is shared across features in MVP.
+
+`/ai/` is a peer of `/lib/` and `/repositories/`, not a child of
+either. Prompts live inside it because they are tightly coupled to
+`PromptModule` and `withAI`; treating them as a domain layer (e.g.
+under `/domain/`) would make the SDK leak across module boundaries
+the ESLint rule deliberately walls off.
+
+### The `PromptModule` shape
+
+```ts
+export interface PromptResult {
+  system: string;
+  user: string;
+  model: string;
+  maxTokens: number;
+}
+
+export interface PromptModule<TInput> {
+  name: string;
+  version: number;
+  build: (input: TInput) => PromptResult;
+}
+```
+
+A prompt is a function, not a string. The call site never sees raw
+prompt text — it hands `withAI` a typed input and the prompt module
+decides what to send. Why:
+
+- **Type safety.** Each prompt declares its own `TInput`; misuse is a
+  type error, not a runtime surprise.
+- **One audit surface.** Every piece of prompt content lives in
+  `src/ai/prompts/`. Future evals, A/B tests, content reviews, and
+  internationalisation all instrument one place.
+- **Versioning is explicit.** Bump the integer `version` field
+  manually when the `build` function's output meaningfully changes.
+  We deliberately don't auto-derive a version from the function body
+  hash — small refactors that don't change semantics shouldn't churn
+  the version, and meaningful semantic changes should be a deliberate
+  human signal stamped into the log.
+
+Future capability slots (e.g. an optional Zod output schema, a `tools`
+list, an `enableThinking` flag) can land on `PromptModule` as
+optional fields without breaking existing modules. Sprint 10 is the
+likely first customer.
+
+### The `withAI` contract
+
+```ts
+export async function withAI<TInput>(args: {
+  feature: string;
+  prompt: PromptModule<TInput>;
+  input: TInput;
+}): Promise<Anthropic.Message>;
+```
+
+Behaviour:
+
+1. **Tenant context required.** `withAI` reads `schoolId` and
+   `actorId` from AsyncLocalStorage (`src/lib/db/context.ts`), set up
+   by the same `withTenant` machinery that scopes every other
+   tenant-bound query. If no `schoolId` is bound, `withAI` throws
+   `MissingTenantContextError` *before* touching the SDK or the DB.
+   AI calls do not happen outside a tenant context.
+2. **Input is hashed, not stored.** `sha256(JSON.stringify(input))`
+   is what lands in `ai_calls.input_hash`. The raw input never
+   touches Postgres. Privacy by default — a future eval pipeline will
+   be a deliberate separate decision rather than a slow data
+   accumulation.
+3. **Prompt is materialised once.** `args.prompt.build(args.input)`
+   is called exactly once, before timing starts.
+4. **Timing wraps the SDK call only.** The latency we record is
+   wall-clock time around `messages.create`, not the wrapper's own
+   bookkeeping.
+5. **Logging is best-effort.** The `ai_calls` row is written *after*
+   the SDK call (success or failure) in a fresh short transaction
+   that sets `app.school_id` for RLS. If the log write itself fails,
+   we `console.error` and return the SDK response anyway. A logging
+   bug must never break a user-facing AI feature. This is also why
+   the log write is **not** part of any caller transaction: a
+   long-running Claude call holding a Postgres tx open would lock
+   rows the upstream caller had updated, which would be a worse
+   failure mode than a missing log row.
+6. **Original error re-thrown on failure.** `withAI` writes a
+   `status='error'` row capturing the truncated error message, then
+   re-throws the SDK's original error so callers can pattern-match on
+   `Anthropic.APIError` subclasses if they want.
+7. **No retries, streaming, output validation, or caching.** Each
+   feature concern lives at the call site (or in a future per-feature
+   helper) — the wrapper stays thin.
+
+The wrapper's return type is `Anthropic.Message` (from
+`@anthropic-ai/sdk`) — concretely the non-streaming response. If a
+future SDK upgrade reshapes that type's import path, we'll switch the
+wrapper's return to `unknown` and let prompt-specific helpers narrow
+it. Don't paper over the moving target with `any`.
+
+### Default model choice
+
+Each prompt picks its own model in the `build` return. Defaults:
+
+- **Classification, structured extraction, anything that's mostly
+  reading and labelling** → `claude-haiku-4-5`. Fast and cheap; the
+  output shape is known and small. Sprint 5's CSV column map fits
+  this. Sprint 10's inbox classifier fits this.
+- **Generative replies, summaries with judgement, anything
+  user-facing** → `claude-opus-4-7`. Higher quality where the output
+  is the product. Sprint 10's reply suggestions fit this.
+
+These are starting points, not rules. A prompt module that needs
+something different (e.g. Sonnet for a balance, or a specific snapshot
+date for reproducibility) just sets the `model` field accordingly.
+
+### The ESLint boundary
+
+`@anthropic-ai/sdk` imports are restricted to `src/ai/**` (and tests).
+The rule is in `eslint.config.mjs` next to the existing Prisma
+boundary. Anything outside `src/ai/` that needs Claude calls
+`withAI()` — not the SDK directly. This keeps the wrapper as the only
+entry point so future cross-cutting concerns (rate limiting, eval
+sampling, tracing) can be added in one place without hunting down
+direct SDK call sites.
+
+### The `ai_calls` table
+
+One row per call through `withAI`, written best-effort. Columns:
+
+- `school_id` (NOT NULL, FK, RLS-scoped) — the wrapper enforces tenant
+  context before the row is written.
+- `user_id` (nullable, indexed, **not FK'd**) — captures the actor
+  when one exists; null for system jobs. Not FK'd because we want log
+  rows to survive user deletion (audit + cost analytics) — the index
+  alone is enough.
+- `feature` (text) — short identifier, convention `<area>.<purpose>`
+  (`inbox.classify`, `onboarding.csv_map`, `system.family_summary`).
+  Cost dashboards will group by this column.
+- `prompt_name`, `prompt_version` — pulled from the `PromptModule`
+  itself, not free-form. This is what makes Sprint 5/10's prompt
+  iteration legible after the fact.
+- `model` — the exact model string used. Captured from the prompt
+  module's `build` output, not hard-coded in the wrapper.
+- `input_hash` — SHA-256 hex of the serialised input. The raw input
+  is never persisted.
+- `input_tokens`, `output_tokens` — from the SDK's `usage` block.
+  Nullable because errored calls may not have a usage block.
+- `latency_ms` (NOT NULL) — wall-clock time around the SDK call.
+- `status` (`ok` | `error`).
+- `error_message` (nullable, truncated to 1000 chars at write time).
+
+The load-bearing index for cost dashboards is
+`(school_id, feature, created_at desc)`. The
+`(school_id, status) WHERE status='error'` partial index makes
+"recent failures" queries cheap.
+
+### SDK version pinning
+
+`@anthropic-ai/sdk` is pinned with a tilde range (`~0.92.0`) so patch
+upgrades come in but minors don't. SDK upgrades are a deliberate
+cross-sprint task, not a routine Dependabot merge — each upgrade must
+re-run the `withAI` integration tests and the smoke endpoint, because
+the SDK's response and parameter types have moved before. Don't bump
+the SDK at the same time as a feature change; do it as its own commit
+on its own PR.
+
+### How Sprint 5 will plug in
+
+Sprint 5 adds `src/ai/prompts/onboarding/csv-column-map.ts` exporting
+a `PromptModule<CsvColumnMapInput>`. The onboarding handler calls:
+
+```ts
+const result = await withAI({
+  feature: "onboarding.csv_map",
+  prompt: csvColumnMap,
+  input: { headers, sampleRows },
+});
+```
+
+No changes to `withAI`, `client.ts`, the `ai_calls` table, or the
+ESLint rule are required. Sprint 5 may want a stable-key stringifier
+for `hashInput` (CSV inputs may have ordering noise that should not
+produce different hashes) — that lives in `withAI.ts` and is a
+~5-line change when needed.
+
+### How Sprint 10 will plug in
+
+Same shape, two prompts:
+`src/ai/prompts/inbox/classify.ts` (Haiku) and
+`src/ai/prompts/inbox/suggest-reply.ts` (Opus). Inbox handlers call
+`withAI({ feature: "inbox.classify", ... })` and
+`withAI({ feature: "inbox.suggest_reply", ... })`. Sprint 10 is the
+likely point at which `PromptModule` grows an optional output schema
+field (Zod or otherwise) — that addition is forward-compatible with
+existing modules, which simply don't set it.

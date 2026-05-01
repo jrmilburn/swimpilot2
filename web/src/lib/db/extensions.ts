@@ -19,6 +19,7 @@ const DOMAIN_MODELS = new Set<string>([
   "Invoice",
   "InvoiceLine",
   "Credit",
+  "AiCall",
 ]);
 
 const WRITE_OPS = new Set<string>([

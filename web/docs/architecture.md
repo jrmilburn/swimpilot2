@@ -401,6 +401,105 @@ Things deliberately not done at MVP:
 - No client-side pre-hash for resumable uploads. Files are small
   (≤2MB for logos).
 
+## Onboarding
+
+Sprint 4 ships the post-signup onboarding wizard. A new school's owner
+walks through Profile → Locations → Levels → Skills → (Sprint 5+)
+Classes, with each step persisted server-side so the owner can resume
+on any device. Sprint 5 onwards adds Classes / Teachers / Billing /
+Channels / Import.
+
+### State model
+
+One row per school in `onboarding_progress` (PK is `school_id`). The
+table is RLS-scoped on `app.school_id` like every other tenant table,
+and an AFTER INSERT trigger on `schools` materialises the row at
+school-creation time so the application code never has to auto-create.
+
+The `step_statuses` column is `JSONB`, keyed by step name with values
+from the `onboarding_step_status` enum (`not_started | in_progress |
+completed | skipped`). Why JSONB rather than a column-per-step:
+Sprints 5–9 each turn on a new step, and per-step columns would mean
+an enum migration plus a column add every sprint chunk. The JSONB
+shape is forward-compatible at the cost of a permissive parser in the
+repository (`onboardingProgressRepository.parseStepStatuses` drops
+unknown keys, falls back to `not_started` for unknown values).
+
+`current_step` is an `onboarding_step` enum that already carries every
+Sprint 4–9 step (`profile | locations | levels | skills | classes |
+teachers | billing | channels | import | done`). The enum is loaded up
+front so subsequent sprints don't churn the DB enum every chunk;
+wizard *ordering* is editorial and lives in TypeScript
+(`ONBOARDING_STEP_ORDER` in `src/domain/onboarding.ts`) — the DB only
+enforces that values are inside the set.
+
+The trigger and the cross-tenant lookup function both live in
+`prisma/migrations/20260501130000_add_onboarding_progress` —
+`app_create_onboarding_progress()` (AFTER INSERT, SECURITY DEFINER,
+`ON CONFLICT DO NOTHING` so the migration backfill is idempotent) and
+`app_get_onboarding_state(school_id uuid)` (SECURITY DEFINER, the
+seam used by the post-sign-in redirect because no tenant context
+exists yet at `/`).
+
+### Resume contract
+
+Closing the browser mid-step and reopening lands the owner back on the
+same step with the persisted state. **Persisted state only — not
+unsaved form drafts.** A half-typed location with no Save click is
+gone on refresh. Per-step actions (`markProfileComplete`,
+`markLocationsComplete`, `markLevelsComplete`, `markSkillsComplete`)
+write on Save / Skip; nothing writes on navigate-away. Per-row
+mutations inside list-of-N steps (`addLocation`, `updateSkill`, …)
+write immediately and rely on `revalidatePath` to refresh the page.
+
+### Redirect rule
+
+After Clerk sign-in, `/` (`src/app/page.tsx`) calls
+`tenantRepository.getOnboardingRedirectState(schoolId)`, which is a
+`$queryRaw` against `app_get_onboarding_state(uuid)` on the base
+prisma client (no tenant context open yet — same shape as
+`lookupTenant`). The decision tree:
+
+- `completed_at IS NOT NULL` → redirect to `/s/<slug>` (the
+  dashboard).
+- `completed_at IS NULL` → redirect to
+  `/s/<slug>/onboarding/<currentStep>`.
+- No row → fall through to the dashboard. A missing row is loud in
+  the wizard layout (it throws — the trigger should have created the
+  row) but quiet on `/` (a months-old user who somehow has their row
+  deleted shouldn't get an error page on every sign-in).
+
+### Why server, not localStorage
+
+A school owner signs in on a phone, completes Profile, then opens
+their laptop. localStorage on the phone wouldn't tell the laptop they
+finished Profile — the laptop would re-prompt for the same fields.
+Server is the only honest source of truth across devices, and once
+the data is on the server anyway the cost of also persisting the step
+status is a single column.
+
+### Skip semantics
+
+Steps that allow Skip set the status to `skipped`. The progress
+indicator treats `skipped` as reachable (the operator chose to skip
+and may want to come back). Re-entering a skipped step and saving
+real data flips the status to `completed` — the step was completed,
+the original skip was just a temporary deferral. Locations is the
+only step that doesn't allow Skip (the wizard can't render the rest
+without at least one location row to attach classes to).
+
+### The Sprint 5 stub
+
+`/onboarding/classes` is a one-page placeholder until Sprint 5 ships
+the real Classes step. It renders inside the wizard chrome (the
+progress indicator highlights it as the current step — `classes` is
+in `WIZARD_STEPS`) with a "Coming soon" card and two affordances:
+"Back to Skills" and "Skip the rest of onboarding for now." The skip
+button calls `skipRemainingOnboarding`, which marks the wizard
+complete and bounces the owner to the dashboard. Sprint 5 replaces
+the page outright; the action either gets removed (the real step has
+its own `markClassesComplete`) or kept as a generic exit affordance.
+
 ## Onboarding templates
 
 The post-signup onboarding wizard (Sprint 4) lets a school operator
@@ -411,27 +510,49 @@ decisions that may evolve between releases independent of any tenant's
 schema. Once applied, the rows are owned by the tenant and edits stay
 local.
 
-Today the only template is `ASSA_LEVEL_TEMPLATE` in
-`src/domain/assaLevelTemplate.ts`: four ordered levels (Infants,
-Beginner, Intermediate, Advanced) with the ratio, age bounds, and
-default progression threshold most starting schools want. The
-Levels-step action `applyAssaDefaults` inserts these as `orderIndex
-0..3` for an empty school; the prompt is only shown when the school
-has zero non-archived levels.
+Two templates live under `src/domain/`:
 
-**Position carries semantic meaning, name does not.** Chunk 5's skill
-template (when it lands as `assaSkillTemplate.ts`) attaches its skills
-to the level by `orderIndex`, not by name. An operator who renames
-"Beginner" to "Tadpoles" after applying the level template still gets
-the right Beginner-tier skills attached when they apply the skill
-template. Reordering `ASSA_LEVEL_TEMPLATE` is therefore a breaking
-change that requires updating the skill template in lockstep.
+- `ASSA_LEVEL_TEMPLATE` (`assaLevelTemplate.ts`) — four ordered levels
+  (Infants, Beginner, Intermediate, Advanced) with the ratio, age
+  bounds, and default progression threshold most starting schools
+  want. The Levels-step action `applyAssaDefaults` inserts these as
+  `orderIndex 0..3` for an empty school; the prompt only renders when
+  the school has zero non-archived levels.
+- `ASSA_SKILL_TEMPLATE` (`assaSkillTemplate.ts`) — a curated set of
+  skills per ASSA level position. Keyed `Record<0|1|2|3, Skill[]>`,
+  matching the level template positions exactly. The Skills-step
+  action `applyAssaSkillsForLevel({ levelId })` looks up the level by
+  id, reads its `orderIndex`, and inserts
+  `ASSA_SKILL_TEMPLATE[orderIndex]` under that level with
+  `orderIndex 0..n-1`.
+
+**Position carries semantic meaning, name does not.** The skill
+template attaches its skills to the level by `orderIndex`, not by
+name — an operator who renames "Beginner" to "Tadpoles" after
+applying the level template still gets the position-1 skills attached
+when they apply the skill template. Reordering `ASSA_LEVEL_TEMPLATE`
+is therefore a breaking change that requires updating
+`ASSA_SKILL_TEMPLATE` in lockstep. Always **append** new template
+entries (a future fifth ASSA level lands at position 4); never insert
+or reorder.
+
+**Position 4+ is template-free territory.** Custom levels the operator
+adds beyond the four ASSA defaults sit outside the curated mapping.
+`applyAssaSkillsForLevel` refuses (typed `_form` validation error)
+when called against a level at `orderIndex >= 4`, and the Skills-step
+UI hides the "Use ASSA defaults for this level" affordance for those
+levels — the operator gets a "no default template — add manually"
+hint and the inline editor instead. The
+`hasAssaSkillTemplate(orderIndex)` predicate exported from
+`assaSkillTemplate.ts` is the canonical gate.
 
 Concurrency: `apply<Template>Defaults` actions guard against
 double-clicks via the existing unique indexes (`(school_id, name)` for
-`class_levels`). The Prisma `P2002` error is caught and re-thrown as a
-friendly `_form` validation message — never let raw Postgres surface to
-the operator.
+`class_levels`; `(school_id, level_id, name)` for `skills`). The
+Prisma `P2002` error is caught at the repository boundary and
+re-thrown as a typed `ValidationError` keyed against `name`; the
+action layer re-keys it to `_form` for the prompt UX surface so the
+operator never sees a raw Postgres error.
 
 ## School switcher and last-school cookie
 

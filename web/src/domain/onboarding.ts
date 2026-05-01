@@ -22,15 +22,21 @@ export const ONBOARDING_STEP_ORDER = [
 
 export type OnboardingStepCode = (typeof ONBOARDING_STEP_ORDER)[number];
 
-// Subset rendered by the Sprint 4 wizard chrome. Sprint 5+ chunks will
-// extend this — keeping it explicit (rather than slicing
-// ONBOARDING_STEP_ORDER) means the visible steps are an editorial
-// decision, not a side-effect of array indexing.
+// Subset rendered by the wizard chrome. Sprint 5+ chunks will extend this
+// — keeping it explicit (rather than slicing ONBOARDING_STEP_ORDER) means
+// the visible steps are an editorial decision, not a side-effect of array
+// indexing.
+//
+// Sprint 4 / Chunk 6 added `classes` so the Sprint 5 stub page renders
+// inside the wizard chrome with the progress indicator highlighting it.
+// The stub at `/onboarding/classes` is replaced by Sprint 5's real
+// classes step.
 export const WIZARD_STEPS = [
   OnboardingStep.Profile,
   OnboardingStep.Locations,
   OnboardingStep.Levels,
   OnboardingStep.Skills,
+  OnboardingStep.Classes,
 ] as const satisfies readonly OnboardingStepCode[];
 
 // `WizardStep` names the four steps actually rendered by the wizard

@@ -5,9 +5,11 @@ import { isWizardStep } from "@/domain/onboarding";
 import * as onboardingProgressRepository from "@/repositories/onboardingProgressRepository";
 import { ProgressIndicator } from "./_components/ProgressIndicator";
 
-// TODO(Chunk 6+): replace with the real "book a migration call" URL once
-// Studio Parallel publishes one. Chunk 1 keeps the link static — the
-// chunk explicitly defers wiring it up.
+// TODO(post-Sprint 4): replace with the real "book a migration call" URL
+// once Studio Parallel publishes one. Chunk 6 carried the placeholder
+// forward — there is no scheduling page yet, and inventing one (or
+// silently falling back to a generic contact page when scheduling is
+// what's wanted) would mislead operators. Flagged in the Chunk 6 handoff.
 const HELP_URL = "https://studioparallel.com.au/contact";
 
 export default async function OnboardingLayout({

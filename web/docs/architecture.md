@@ -401,6 +401,38 @@ Things deliberately not done at MVP:
 - No client-side pre-hash for resumable uploads. Files are small
   (≤2MB for logos).
 
+## Onboarding templates
+
+The post-signup onboarding wizard (Sprint 4) lets a school operator
+pre-fill several steps from a canonical template rather than building
+everything from scratch. Templates live in TypeScript (under
+`src/domain/`), not in the database — they are SwimPilot product
+decisions that may evolve between releases independent of any tenant's
+schema. Once applied, the rows are owned by the tenant and edits stay
+local.
+
+Today the only template is `ASSA_LEVEL_TEMPLATE` in
+`src/domain/assaLevelTemplate.ts`: four ordered levels (Infants,
+Beginner, Intermediate, Advanced) with the ratio, age bounds, and
+default progression threshold most starting schools want. The
+Levels-step action `applyAssaDefaults` inserts these as `orderIndex
+0..3` for an empty school; the prompt is only shown when the school
+has zero non-archived levels.
+
+**Position carries semantic meaning, name does not.** Chunk 5's skill
+template (when it lands as `assaSkillTemplate.ts`) attaches its skills
+to the level by `orderIndex`, not by name. An operator who renames
+"Beginner" to "Tadpoles" after applying the level template still gets
+the right Beginner-tier skills attached when they apply the skill
+template. Reordering `ASSA_LEVEL_TEMPLATE` is therefore a breaking
+change that requires updating the skill template in lockstep.
+
+Concurrency: `apply<Template>Defaults` actions guard against
+double-clicks via the existing unique indexes (`(school_id, name)` for
+`class_levels`). The Prisma `P2002` error is caught and re-thrown as a
+friendly `_form` validation message — never let raw Postgres surface to
+the operator.
+
 ## School switcher and last-school cookie
 
 Users can be members of multiple schools. The header in

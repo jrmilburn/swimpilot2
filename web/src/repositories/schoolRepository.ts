@@ -9,6 +9,21 @@ export type School = {
   name: string;
   timezone: string;
   currency: string;
+  // Profile fields (Sprint 4 / Chunk 2). All nullable in the domain type
+  // because the column is nullable AND a school can legitimately skip the
+  // profile step. Callers handle absence explicitly.
+  legalName: string | null;
+  tradingName: string | null;
+  abn: string | null;
+  gstRegistered: boolean | null;
+  primaryContactName: string | null;
+  primaryContactEmail: string | null;
+  primaryContactPhone: string | null;
+  // Holds a Supabase Storage path (`<school_id>/logo/<uuid>.<ext>`),
+  // not a resolvable URL. Page render code signs it on read. The column
+  // name stays `logo_url` rather than the more accurate `logo_path` to
+  // avoid renaming mid-sprint; see docs/architecture.md "File storage".
+  logoUrl: string | null;
   createdAt: Date;
   updatedAt: Date;
   createdBy: string;
@@ -28,6 +43,14 @@ export type UpdateSchoolInput = Partial<{
   name: string;
   timezone: string;
   currency: string;
+  legalName: string | null;
+  tradingName: string | null;
+  abn: string | null;
+  gstRegistered: boolean | null;
+  primaryContactName: string | null;
+  primaryContactEmail: string | null;
+  primaryContactPhone: string | null;
+  logoUrl: string | null;
   deletedAt: Date | null;
 }>;
 
@@ -37,6 +60,14 @@ type SchoolRow = {
   name: string;
   timezone: string;
   currency: string;
+  legalName: string | null;
+  tradingName: string | null;
+  abn: string | null;
+  gstRegistered: boolean | null;
+  primaryContactName: string | null;
+  primaryContactEmail: string | null;
+  primaryContactPhone: string | null;
+  logoUrl: string | null;
   createdAt: Date;
   updatedAt: Date;
   createdBy: string;
@@ -51,6 +82,14 @@ function toSchool(row: SchoolRow): School {
     name: row.name,
     timezone: row.timezone,
     currency: row.currency,
+    legalName: row.legalName,
+    tradingName: row.tradingName,
+    abn: row.abn,
+    gstRegistered: row.gstRegistered,
+    primaryContactName: row.primaryContactName,
+    primaryContactEmail: row.primaryContactEmail,
+    primaryContactPhone: row.primaryContactPhone,
+    logoUrl: row.logoUrl,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     createdBy: row.createdBy,

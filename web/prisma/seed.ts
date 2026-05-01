@@ -13,18 +13,37 @@ import { PrismaClient } from "@prisma/client";
 
 const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000";
 
+// Profile fields (Sprint 4 / Chunk 2) seeded for the two reference schools
+// so dev runs and the integration suite see plausible values out of the
+// box. Logo is deliberately not seeded — Storage is environment-dependent
+// and we don't want seed to fail when Supabase isn't configured locally.
+// ABN values are any 11-digit number; we don't validate the AU checksum.
 const SEED_SCHOOLS = [
   {
     slug: "riverside",
     name: "Riverside Swim School",
     timezone: "Australia/Sydney",
     currency: "AUD",
+    legalName: "Riverside Swim School Pty Ltd",
+    tradingName: "Riverside Swim School",
+    abn: "51824753556",
+    gstRegistered: true,
+    primaryContactName: "Maya Patel",
+    primaryContactEmail: "owner@riverside.test",
+    primaryContactPhone: "+61 2 9123 4567",
   },
   {
     slug: "coastal",
     name: "Coastal Swim School",
     timezone: "Australia/Sydney",
     currency: "AUD",
+    legalName: "Coastal Aquatics Pty Ltd",
+    tradingName: "Coastal Swim School",
+    abn: "29004085616",
+    gstRegistered: true,
+    primaryContactName: "Jordan Reyes",
+    primaryContactEmail: "owner@coastal.test",
+    primaryContactPhone: "+61 2 9876 5432",
   },
 ];
 
@@ -2247,13 +2266,29 @@ async function main() {
   try {
     for (const s of SEED_SCHOOLS) {
       await prisma.$executeRaw`
-        INSERT INTO schools (slug, name, timezone, currency, created_by, updated_by, updated_at)
-        VALUES (${s.slug}, ${s.name}, ${s.timezone}, ${s.currency},
-                ${SYSTEM_USER_ID}::uuid, ${SYSTEM_USER_ID}::uuid, now())
+        INSERT INTO schools (
+          slug, name, timezone, currency,
+          legal_name, trading_name, abn, gst_registered,
+          primary_contact_name, primary_contact_email, primary_contact_phone,
+          created_by, updated_by, updated_at
+        )
+        VALUES (
+          ${s.slug}, ${s.name}, ${s.timezone}, ${s.currency},
+          ${s.legalName}, ${s.tradingName}, ${s.abn}, ${s.gstRegistered},
+          ${s.primaryContactName}, ${s.primaryContactEmail}, ${s.primaryContactPhone},
+          ${SYSTEM_USER_ID}::uuid, ${SYSTEM_USER_ID}::uuid, now()
+        )
         ON CONFLICT (slug) DO UPDATE
           SET name = EXCLUDED.name,
               timezone = EXCLUDED.timezone,
               currency = EXCLUDED.currency,
+              legal_name = EXCLUDED.legal_name,
+              trading_name = EXCLUDED.trading_name,
+              abn = EXCLUDED.abn,
+              gst_registered = EXCLUDED.gst_registered,
+              primary_contact_name = EXCLUDED.primary_contact_name,
+              primary_contact_email = EXCLUDED.primary_contact_email,
+              primary_contact_phone = EXCLUDED.primary_contact_phone,
               updated_at = now()
       `;
     }

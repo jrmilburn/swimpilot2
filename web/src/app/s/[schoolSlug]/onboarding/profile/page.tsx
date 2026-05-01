@@ -1,57 +1,73 @@
-import { redirect } from "next/navigation";
-import { OnboardingStep } from "@/domain/enums";
-import { nextStepAfter } from "@/domain/onboarding";
-import { markStepComplete } from "../_actions/markStepComplete";
+import { requireTenant } from "@/lib/auth/requireTenant";
+import { withTenant } from "@/lib/db/withTenant";
+import * as schoolRepository from "@/repositories/schoolRepository";
+import * as assetRepository from "@/repositories/assetRepository";
+import { ProfileForm } from "./_components/ProfileForm";
 
-// Chunk 1 placeholder. Chunk 2 (Sprint 4 — `profile`) replaces the body
-// with the real school-profile form (display name, contact email, phone,
-// time zone, currency). The `<form action>` shape stays — only the inputs
-// inside the form change.
+// Sprint 4 / Chunk 2 — the Profile step body. Renders saved values,
+// produces a signed URL for the existing logo (if any) so the preview
+// works on first paint, and hands a typed initial-values object to the
+// client form. The form action redirects on success — we don't need an
+// inline `useFormState` here because the redirect throws and the page
+// re-renders inside the wizard layout.
 export default async function ProfileStepPage({
   params,
 }: {
   params: Promise<{ schoolSlug: string }>;
 }) {
   const { schoolSlug } = await params;
+  const { schoolId, userId } = await requireTenant(schoolSlug);
 
-  async function continueStep() {
-    "use server";
-    const result = await markStepComplete({ step: OnboardingStep.Profile });
-    if (!result.ok) {
-      // Chunk 1 has no validation-failure paths — the placeholder always
-      // succeeds. Errors here mean the wrapper itself failed (auth, RLS,
-      // DB outage); surface as a thrown error so the framework error
-      // boundary catches it. Chunks 2–5 swap this for `useActionState`
-      // once forms have real validation.
-      throw new Error(`markStepComplete failed: ${result.error.code}`);
+  const school = await withTenant({ schoolId, userId }, (tx) =>
+    schoolRepository.getById(tx, schoolId),
+  );
+  if (!school) {
+    // requireTenant() should have already failed if the school is
+    // missing, but guard the type narrowing for TS.
+    throw new Error(`schoolRepository.getById returned null for ${schoolId}`);
+  }
+
+  // Produce a signed URL for the existing logo so the form's preview
+  // works on first render. If signing fails (e.g. the path is stale and
+  // the object's been deleted), swallow and fall through to "no
+  // preview" rather than blowing up the wizard — the user can re-upload.
+  let logoSignedUrl: string | null = null;
+  if (school.logoUrl) {
+    try {
+      logoSignedUrl = await assetRepository.signSchoolAssetUrl(school.logoUrl);
+    } catch (err) {
+      console.error("[profile] failed to sign logo URL", err);
     }
-    if (result.data.completedWizard) {
-      redirect(`/s/${schoolSlug}`);
-    }
-    redirect(
-      `/s/${schoolSlug}/onboarding/${nextStepAfter(OnboardingStep.Profile)}`,
-    );
   }
 
   return (
-    <section className="flex flex-1 flex-col items-center justify-center p-8">
-      <div className="flex max-w-lg flex-col items-center gap-4 text-center">
-        <h2 className="text-xl font-semibold tracking-tight">
-          Step 1: Profile — coming in Chunk 2
-        </h2>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          The real form (display name, contact email, time zone, currency)
-          ships in Sprint 4 / Chunk 2. For now, click continue to advance
-          the wizard.
-        </p>
-        <form action={continueStep}>
-          <button
-            type="submit"
-            className="rounded-full bg-foreground px-5 py-2 text-sm text-background"
-          >
-            Continue (placeholder)
-          </button>
-        </form>
+    <section className="flex flex-1 flex-col items-center px-6 py-10">
+      <div className="flex w-full max-w-2xl flex-col gap-6">
+        <header className="flex flex-col gap-2">
+          <h2 className="text-xl font-semibold tracking-tight">
+            School profile
+          </h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            Identity and branding. You can come back and edit any of this
+            later. Skip if you&apos;d rather move on — nothing here is required to
+            keep going.
+          </p>
+        </header>
+        <ProfileForm
+          initial={{
+            legalName: school.legalName,
+            tradingName: school.tradingName,
+            abn: school.abn,
+            gstRegistered: school.gstRegistered,
+            primaryContactName: school.primaryContactName,
+            primaryContactEmail: school.primaryContactEmail,
+            primaryContactPhone: school.primaryContactPhone,
+            logoPath: school.logoUrl,
+            logoSignedUrl,
+            schoolSlug,
+            currency: school.currency,
+          }}
+        />
       </div>
     </section>
   );

@@ -176,16 +176,28 @@ enum OnboardingStepStatus {
 }
 
 model School {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  slug      String    @unique
-  name      String
-  timezone  String
-  currency  String
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy String    @map("created_by") @db.Uuid
-  updatedBy String    @map("updated_by") @db.Uuid
-  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug                 String    @unique
+  name                 String
+  timezone             String
+  currency             String
+  // Profile fields (Sprint 4 / Chunk 2). All nullable: a school can
+  // skip the profile step legitimately, and the migration is safe on
+  // pre-existing rows. `logoUrl` actually stores a Supabase Storage
+  // path, not a resolvable URL — see docs/architecture.md "File storage".
+  legalName            String?   @map("legal_name")
+  tradingName          String?   @map("trading_name")
+  abn                  String?
+  gstRegistered        Boolean?  @map("gst_registered")
+  primaryContactName   String?   @map("primary_contact_name")
+  primaryContactEmail  String?   @map("primary_contact_email")
+  primaryContactPhone  String?   @map("primary_contact_phone")
+  logoUrl              String?   @map("logo_url")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy            String    @map("created_by") @db.Uuid
+  updatedBy            String    @map("updated_by") @db.Uuid
+  deletedAt            DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   memberships   Membership[]
   locations     Location[]

@@ -232,6 +232,175 @@ Anything that can't be tied to a single school — admin tooling, webhooks (e.g.
 - request metrics / tracing spans
 - role-based authorisation policies (the `role` is already in `TenantContext`)
 
+## File storage
+
+User-uploaded binary content — school logos, later attendance photos,
+invoice PDFs, signed waivers — does not live in Postgres. It lives in
+Supabase Storage, and the database stores only the storage **path**
+(not the URL) for each asset. This section documents the seam: where
+the SDK is allowed, what the bucket layout looks like, why the bucket
+is private, and how a server action moves bytes from a browser into
+storage.
+
+### Why Supabase Storage
+
+We already run Supabase for auth and Postgres. Adding a separate
+object store (S3, R2, Cloudflare Images) would mean a second set of
+credentials, a second IAM model, a second URL-signing implementation,
+and a second story to tell on-call. Supabase Storage is S3-compatible
+underneath, so we keep the option to swap it later for the cost of
+re-implementing one repository file. For MVP that trade is correct.
+
+### Bucket layout
+
+One bucket — `school-assets` — for everything tenant-scoped. Paths
+are namespaced by school id and asset type:
+
+```
+school-assets/
+  <school_id>/logo/<uuid>.<ext>
+  <school_id>/attendance-photo/<uuid>.<ext>
+  <school_id>/invoice/<uuid>.pdf
+  <school_id>/waiver/<uuid>.pdf
+```
+
+The school id prefix is load-bearing: it lets us reason about
+tenant ownership purely from the path, and gives us an obvious
+sharding key if we ever migrate to per-tenant buckets. The asset
+type segment lets us list/clean per category without an index. The
+filename is always a fresh UUID — never a user-supplied name —
+because user-supplied filenames are an injection surface (path
+traversal, header confusion) we don't need to fight.
+
+### Private bucket, signed URLs
+
+The bucket is private. There is no public read. Every render that
+needs to display an asset asks `assetRepository.signSchoolAssetUrl`
+for a short-lived (default 1-hour) signed URL.
+
+Why private:
+
+1. **Cross-tenant isolation by default.** A misrouted path or a
+   leaked id cannot be opened by an outside browser without a
+   signature.
+2. **Revocability.** If a tenant churns or an asset must be pulled,
+   we don't have to chase down cached public URLs.
+3. **Audit story.** Every read is implicitly a server-side decision
+   — we can add per-asset auth later (e.g. only family members see
+   their own attendance photos) without changing the public-vs-
+   private posture.
+
+Signed URLs are issued at server-render time (Server Components or
+server actions) and embedded in the HTML. They're not minted in
+client components.
+
+### Service-role client only
+
+`@supabase/supabase-js` lives in exactly one module:
+`src/lib/storage/client.ts`. ESLint forbids importing it
+anywhere else.
+
+The Storage client is the **service-role** client. It bypasses
+Storage RLS, because tenancy is enforced one layer up by the same
+mechanism every other write goes through: the action runs inside
+`tenantAction`, which has already pinned the school id. The
+storage path is constructed from that pinned id — the request
+body cannot influence which `<school_id>/` prefix the file lands
+under. RLS on the storage bucket would be redundant (and would
+require us to mint per-request user JWTs against Supabase, which
+we don't otherwise need).
+
+In other words: the storage path is derived, not supplied. The
+service-role client is safe **because** it is only reachable from
+inside `tenantAction`-scoped code.
+
+### `assetRepository`
+
+`src/repositories/assetRepository.ts` is the only module that
+calls the storage client. The surface is intentionally small:
+
+```ts
+uploadSchoolAsset(_db, { schoolId, assetType, file, contentType })
+  → string                    // returns the storage path
+signSchoolAssetUrl(path, ttlSeconds = 3600)
+  → string                    // returns a signed URL
+deleteSchoolAsset(path)
+  → void                      // idempotent on not-found
+```
+
+The repository:
+
+- generates the UUID filename and resolves the extension from the
+  content type (we don't trust user-supplied filenames),
+- enforces the `<school_id>/<assetType>/...` shape,
+- raises a typed error on storage failures so the action layer can
+  return a clean `ActionResult`.
+
+Note the `_db` argument: it's unused today (storage isn't
+transactional with Postgres), but it keeps the call shape uniform
+with every other repository function so callers don't need to
+remember which repos take a `tx` and which don't.
+
+### Upload-then-persist split
+
+Uploading a file and saving the form that references it are
+**separate** server actions. The form's `<input type="file">`
+fires a direct `uploadSchoolLogo(formData)` call as soon as the
+user picks a file. That action returns a path. The form holds the
+path in client state (and a hidden `<input>`); the eventual
+"Save and continue" submit posts the path through
+`markProfileComplete`, which is what writes the column.
+
+This split exists because:
+
+1. **`useActionState` doesn't multipart.** React's
+   `useActionState` cycles re-render the form with the action's
+   returned state — but binary file inputs don't survive
+   serialisation through the state cycle. Splitting the upload
+   keeps `useActionState` for the validatable text fields where
+   it shines.
+2. **Server-side storage is the source of truth.** If the user
+   uploads, then closes the tab, we have an orphan in the bucket
+   — but no orphan column reference. A periodic cleanup of
+   unreferenced `<school_id>/logo/*.png` is a future cron, not a
+   correctness problem.
+3. **Failure isolation.** A network error on upload leaves the
+   rest of the form intact. The user can re-pick a file and
+   retry without losing what they typed.
+
+### Worked example: school logo
+
+1. User opens `/s/<slug>/onboarding/profile`. The page server-
+   reads the school via `schoolRepository.getById`. If
+   `school.logoUrl` is set (it stores a path), the page calls
+   `assetRepository.signSchoolAssetUrl(path)` and passes the
+   signed URL to the client form for first-paint preview.
+2. User picks a new file. The client component calls
+   `uploadSchoolLogo(formData)`. That action validates content
+   type and size, then `assetRepository.uploadSchoolAsset` writes
+   `<school_id>/logo/<uuid>.png` and returns the path.
+3. The client stores the new path in state (and a hidden form
+   field), and shows a local object URL as the preview until the
+   next page render.
+4. User clicks "Save and continue". The form posts the hidden
+   `logoUrl` (path) to `markProfileComplete`, which calls
+   `schoolRepository.update` with `{ logoUrl: path, ... }`. The
+   `schools.logo_url` column now holds the path.
+5. On the next render, the page signs the stored path again and
+   the preview is back, this time from durable storage.
+
+Things deliberately not done at MVP:
+
+- No CDN cache headers / image optimisation. We serve straight
+  from Supabase Storage. If logo loads become a hot path we'll
+  proxy via Next's image route.
+- No orphan cleanup. Out-of-form uploads accumulate; we'll add a
+  scheduled job once we have multiple asset types.
+- No quota per-school. We lean on Supabase's project-wide
+  ceiling for now and surface a dashboard alert.
+- No client-side pre-hash for resumable uploads. Files are small
+  (≤2MB for logos).
+
 ## School switcher and last-school cookie
 
 Users can be members of multiple schools. The header in

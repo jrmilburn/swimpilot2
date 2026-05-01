@@ -72,6 +72,13 @@ type FamilySeed = {
 type LocationSeed = {
   name: string;
   timezone?: string;
+  // Sprint 4 / Chunk 3 — plausible address fields for the demo schools.
+  // All optional; the seed remains idempotent and safe on a re-run.
+  addressLine?: string;
+  suburb?: string;
+  state?: string;
+  postcode?: string;
+  notes?: string;
 };
 
 type TeacherSeed = {
@@ -287,13 +294,43 @@ const COASTAL_FAMILIES: FamilySeed[] = [
 ];
 
 const RIVERSIDE_LOCATIONS: LocationSeed[] = [
-  { name: "Parramatta Pool", timezone: "Australia/Sydney" },
-  { name: "Ryde Aquatic", timezone: "Australia/Sydney" },
+  {
+    name: "Parramatta Pool",
+    timezone: "Australia/Sydney",
+    addressLine: "46 Park Pde",
+    suburb: "Parramatta",
+    state: "NSW",
+    postcode: "2150",
+    notes: "Indoor 25m heated pool. Family change rooms on level 1.",
+  },
+  {
+    name: "Ryde Aquatic",
+    timezone: "Australia/Sydney",
+    addressLine: "504 Victoria Rd",
+    suburb: "Ryde",
+    state: "NSW",
+    postcode: "2112",
+  },
 ];
 
 const COASTAL_LOCATIONS: LocationSeed[] = [
-  { name: "Bondi Pavilion", timezone: "Australia/Sydney" },
-  { name: "Maroubra Beach Pool", timezone: "Australia/Sydney" },
+  {
+    name: "Bondi Pavilion",
+    timezone: "Australia/Sydney",
+    addressLine: "Queen Elizabeth Dr",
+    suburb: "Bondi Beach",
+    state: "NSW",
+    postcode: "2026",
+    notes: "Outdoor saltwater pool — wet-weather backup at Maroubra.",
+  },
+  {
+    name: "Maroubra Beach Pool",
+    timezone: "Australia/Sydney",
+    addressLine: "Marine Pde",
+    suburb: "Maroubra",
+    state: "NSW",
+    postcode: "2035",
+  },
 ];
 
 const RIVERSIDE_TEACHERS: TeacherSeed[] = [
@@ -1389,13 +1426,25 @@ async function seedLocations(
     });
     if (existing) {
       await prisma.$executeRaw`
-        UPDATE locations SET timezone = ${loc.timezone ?? null}, updated_at = now()
-        WHERE id = ${existing.id}::uuid
+        UPDATE locations
+           SET timezone = ${loc.timezone ?? null},
+               address_line = ${loc.addressLine ?? null},
+               suburb = ${loc.suburb ?? null},
+               state = ${loc.state ?? null},
+               postcode = ${loc.postcode ?? null},
+               notes = ${loc.notes ?? null},
+               updated_at = now()
+         WHERE id = ${existing.id}::uuid
       `;
     } else {
       await prisma.$executeRaw`
-        INSERT INTO locations (school_id, name, timezone, created_by, updated_by, updated_at)
+        INSERT INTO locations (school_id, name, timezone,
+                               address_line, suburb, state, postcode, notes,
+                               created_by, updated_by, updated_at)
         VALUES (${school.id}::uuid, ${loc.name}, ${loc.timezone ?? null},
+                ${loc.addressLine ?? null}, ${loc.suburb ?? null},
+                ${loc.state ?? null}, ${loc.postcode ?? null},
+                ${loc.notes ?? null},
                 ${SYSTEM_USER_ID}::uuid, ${SYSTEM_USER_ID}::uuid, now())
       `;
     }

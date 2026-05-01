@@ -74,14 +74,18 @@ export async function saveProfileForm(
 
   if (!result.ok) {
     if (result.error.code === "VALIDATION") {
-      // Heuristic field mapping: the action's z.refine messages name the
-      // failing field. We don't have field paths from `tenantAction`'s
-      // result shape (it returns one message), so match on substring.
-      // Two-field cases ("ABN must be 11 digits" / "Primary contact
-      // email is invalid") are the only ones the action raises — others
-      // are caught by the JSX-level required attributes before the
-      // action sees them.
+      // Prefer the typed `fieldErrors` map promoted in Chunk 3. Fall
+      // back to the substring heuristic for any throw site that hasn't
+      // been migrated — both call shapes are supported in parallel so
+      // we don't have to reach every site at once.
       const msg = result.error.message;
+      if (result.error.fieldErrors) {
+        return {
+          message: msg,
+          fieldErrors: result.error
+            .fieldErrors as ProfileFormState["fieldErrors"],
+        };
+      }
       const fieldErrors: ProfileFormState["fieldErrors"] = {};
       if (/abn/i.test(msg)) fieldErrors.abn = msg;
       else if (/email/i.test(msg)) fieldErrors.primaryContactEmail = msg;

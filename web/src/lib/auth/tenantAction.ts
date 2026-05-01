@@ -19,6 +19,10 @@ export type TenantContext = {
 export type ActionError = {
   code: "NOT_FOUND" | "FORBIDDEN" | "VALIDATION" | "INTERNAL";
   message: string;
+  // Set when a `ValidationError` carried per-field error messages. Form
+  // bridges read this in preference to substring-matching on `message`.
+  // Only present on `code: 'VALIDATION'` results.
+  fieldErrors?: Record<string, string>;
 };
 
 export type ActionResult<T> =
@@ -95,7 +99,11 @@ export function tenantAction<TArgs extends unknown[], TResult>(
       if (err instanceof ValidationError) {
         return {
           ok: false,
-          error: { code: "VALIDATION", message: err.message },
+          error: {
+            code: "VALIDATION",
+            message: err.message,
+            ...(err.fieldErrors ? { fieldErrors: err.fieldErrors } : {}),
+          },
         };
       }
 

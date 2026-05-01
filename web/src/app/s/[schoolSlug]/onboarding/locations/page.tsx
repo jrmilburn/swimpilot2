@@ -1,50 +1,54 @@
-import { redirect } from "next/navigation";
-import { OnboardingStep } from "@/domain/enums";
-import { nextStepAfter } from "@/domain/onboarding";
-import { markStepComplete } from "../_actions/markStepComplete";
+import { requireTenant } from "@/lib/auth/requireTenant";
+import { withTenant } from "@/lib/db/withTenant";
+import * as locationRepository from "@/repositories/locationRepository";
+import * as schoolRepository from "@/repositories/schoolRepository";
+import { LocationsList } from "./_components/LocationsList";
 
-// Chunk 1 placeholder. Chunk 3 (Sprint 4 — `locations`) replaces the body
-// with the real locations form (pool / venue list, address, capacity).
+// Sprint 4 / Chunk 3 — the Locations step body. The page reads the
+// school's locations inside `withTenant` so RLS scopes the lookup, then
+// hands them to a client component along with the school timezone (used
+// as the placeholder when the operator leaves a per-location timezone
+// blank).
 export default async function LocationsStepPage({
   params,
 }: {
   params: Promise<{ schoolSlug: string }>;
 }) {
   const { schoolSlug } = await params;
+  const { schoolId, userId } = await requireTenant(schoolSlug);
 
-  async function continueStep() {
-    "use server";
-    const result = await markStepComplete({ step: OnboardingStep.Locations });
-    if (!result.ok) {
-      throw new Error(`markStepComplete failed: ${result.error.code}`);
-    }
-    if (result.data.completedWizard) {
-      redirect(`/s/${schoolSlug}`);
-    }
-    redirect(
-      `/s/${schoolSlug}/onboarding/${nextStepAfter(OnboardingStep.Locations)}`,
-    );
+  const [school, locations] = await withTenant(
+    { schoolId, userId },
+    async (tx) => {
+      const [s, ls] = await Promise.all([
+        schoolRepository.getById(tx, schoolId),
+        locationRepository.listBySchool(tx),
+      ]);
+      return [s, ls] as const;
+    },
+  );
+  if (!school) {
+    throw new Error(`schoolRepository.getById returned null for ${schoolId}`);
   }
 
   return (
-    <section className="flex flex-1 flex-col items-center justify-center p-8">
-      <div className="flex max-w-lg flex-col items-center gap-4 text-center">
-        <h2 className="text-xl font-semibold tracking-tight">
-          Step 2: Locations — coming in Chunk 3
-        </h2>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          The real form (pool / venue list with address and capacity) ships
-          in Sprint 4 / Chunk 3. For now, click continue to advance the
-          wizard.
-        </p>
-        <form action={continueStep}>
-          <button
-            type="submit"
-            className="rounded-full bg-foreground px-5 py-2 text-sm text-background"
-          >
-            Continue (placeholder)
-          </button>
-        </form>
+    <section className="flex flex-1 flex-col items-center px-6 py-10">
+      <div className="flex w-full max-w-2xl flex-col gap-6">
+        <header className="flex flex-col gap-2">
+          <h2 className="text-xl font-semibold tracking-tight">
+            Where do you teach?
+          </h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            Add one row for each pool or venue you run classes from. You can
+            edit or remove these later. At least one is required to keep
+            going — locations are how classes know where to be scheduled.
+          </p>
+        </header>
+        <LocationsList
+          initial={locations}
+          schoolSlug={schoolSlug}
+          schoolTimezone={school.timezone}
+        />
       </div>
     </section>
   );

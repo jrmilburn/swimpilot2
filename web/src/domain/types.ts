@@ -58,6 +58,26 @@ export interface Student {
   updatedAt: Date;
 }
 
+// `timezone` is intentionally nullable in the domain type. A null value
+// means "use the parent school's timezone" — render-layer concern, not
+// papered over with a getter that falls back at the repository boundary.
+// Address columns are all free-text (no AU-state enum, no postcode CHECK)
+// — see the migration's preamble for the international-expansion
+// rationale.
+export interface Location {
+  id: string;
+  schoolId: string;
+  name: string;
+  timezone: string | null;
+  addressLine: string | null;
+  suburb: string | null;
+  state: string | null;
+  postcode: string | null;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface ClassLevel {
   id: string;
   schoolId: string;

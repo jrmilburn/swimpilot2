@@ -261,15 +261,20 @@ model Membership {
 }
 
 model Location {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId  String    @map("school_id") @db.Uuid
-  name      String
-  timezone  String?
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy String    @map("created_by") @db.Uuid
-  updatedBy String    @map("updated_by") @db.Uuid
-  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId    String    @map("school_id") @db.Uuid
+  name        String
+  timezone    String?
+  addressLine String?   @map("address_line")
+  suburb      String?
+  state       String?
+  postcode    String?
+  notes       String?
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   String    @map("created_by") @db.Uuid
+  updatedBy   String    @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   school  School  @relation(fields: [schoolId], references: [id])
   classes Class[]

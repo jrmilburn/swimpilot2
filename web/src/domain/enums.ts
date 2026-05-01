@@ -74,3 +74,51 @@ export const SkillStatus = {
   Achieved: "achieved",
 } as const;
 export type SkillStatus = (typeof SkillStatus)[keyof typeof SkillStatus];
+
+export const BillingFrequency = {
+  Weekly: "weekly",
+  Fortnightly: "fortnightly",
+} as const;
+export type BillingFrequency =
+  (typeof BillingFrequency)[keyof typeof BillingFrequency];
+
+export const PaymentMethodType = {
+  Card: "card",
+  Becs: "becs",
+} as const;
+export type PaymentMethodType =
+  (typeof PaymentMethodType)[keyof typeof PaymentMethodType];
+
+export const BillingProfileStatus = {
+  PendingSetup: "pending_setup",
+  Active: "active",
+  PaymentFailed: "payment_failed",
+  Cancelled: "cancelled",
+} as const;
+export type BillingProfileStatus =
+  (typeof BillingProfileStatus)[keyof typeof BillingProfileStatus];
+
+export const InvoiceStatus = {
+  Draft: "draft",
+  Issued: "issued",
+  Paid: "paid",
+  Overdue: "overdue",
+  Void: "void",
+} as const;
+export type InvoiceStatus = (typeof InvoiceStatus)[keyof typeof InvoiceStatus];
+
+export const CreditSource = {
+  SchoolCancellation: "school_cancellation",
+  NotifiedAbsence: "notified_absence",
+  Refund: "refund",
+  Manual: "manual",
+} as const;
+export type CreditSource = (typeof CreditSource)[keyof typeof CreditSource];
+
+export const CreditStatus = {
+  Available: "available",
+  Applied: "applied",
+  Expired: "expired",
+  Void: "void",
+} as const;
+export type CreditStatus = (typeof CreditStatus)[keyof typeof CreditStatus];

@@ -658,3 +658,129 @@ because progression history is one of the few things teachers and
 parents look back on years later — hard-deleting a skill would break
 old report cards. Archived skills are included by passing
 `includeArchived: true` to `listByLevel`.
+
+## Domain model — Billing primitives
+
+### The four tables (plus a counter)
+
+`billing_profiles`, `invoices`, `invoice_lines`, and `credits` form one
+aggregate keyed on the family. They follow the same conventions as
+every other Sprint 1–4 table: UUID PKs, audit fields, `deleted_at`,
+FORCE ROW LEVEL SECURITY scoped on `current_setting('app.school_id')`,
+and `BEFORE INSERT/UPDATE` SECURITY DEFINER triggers for cross-row
+consistency. A fifth table, `billing_counters`, holds the per-school
+sequential allocator for human-readable invoice numbers; it is
+RLS-scoped too and intentionally lacks audit columns because Sprint 8
+will mutate it from inside the invoice-create transaction via
+`SELECT … FOR UPDATE` and not via a user-triggered code path.
+
+This chunk is **schema only**. A repository surface exists for billing
+profile reads + create/update (Sprint 4 onboarding writes the row that
+Stripe will attach to in Sprint 8) and for invoice and credit reads.
+Invoice generation, line generation, status transitions, credit
+creation, and credit application all live in Sprint 8 — none of them
+have repository methods today.
+
+### Money is integer cents, full stop
+
+Every monetary column on every billing table is `INTEGER` cents. There
+is no `DECIMAL`, no `numeric`, and no `Float` anywhere on the billing
+path. This is the whole reason the line-total CHECK looks the way it
+does:
+
+    CHECK (line_total_cents = (amount_ex_gst_cents + gst_amount_cents) * quantity)
+
+Integer arithmetic round-trips cleanly across Postgres, Prisma, and the
+Stripe API; floats do not. A single `0.1 + 0.2` in the wrong place is
+a billing incident waiting to happen, so the type system simply makes
+that mistake unrepresentable.
+
+### GST is snapshotted per line
+
+`amount_ex_gst_cents` and `gst_amount_cents` are written at issue time
+and immutable thereafter. This matters for two reasons. First, an
+invoice is a legal record — the GST it shows must be the GST that
+applied to the customer at the moment they were billed, not the GST
+in force when someone happens to read the row years later. Second, AU
+GST is currently 10% but the framework allows it to change; if it
+ever does, historical invoices must continue to show the old rate.
+Storing a snapshot rather than computing on read is the only safe
+option.
+
+The header `subtotal_cents` / `gst_cents` / `total_cents` are
+intentionally duplicated against the line totals. The CHECK
+`total_cents = subtotal_cents + gst_cents` catches drift between the
+header and the lines if anyone ever writes them inconsistently —
+"silent drift" is exactly the failure mode this constraint exists to
+prevent.
+
+### One billing profile per family
+
+Enforced by a `UNIQUE INDEX` on `billing_profiles.family_id`, not just
+by repository convention. New profiles start at `pending_setup`. Sprint
+4 onboarding will create the row at the moment a family signs up, and
+Sprint 8's Stripe attach flow will populate `stripe_customer_id` /
+`stripe_payment_method_id` and promote `status` to `active`. Status
+transitions are NOT enforced at the DB layer — Sprint 8 owns the state
+machine.
+
+### Family-level vs student-level credits
+
+`credits.student_id` is nullable. NULL means "applies to any student
+in the family"; non-NULL pins the credit to one student (e.g. a
+notified-absence credit for one child's missed lesson). The trigger
+enforces that when `student_id` is set, `student.family_id` must equal
+the credit's `family_id` — a student-level credit cannot belong to
+someone outside the family it's attributed to.
+
+`amount_cents` is GST-inclusive and applies against `total_cents` on an
+invoice (not against the subtotal). Sprint 8's invoice generator is
+responsible for selecting and applying eligible credits; this chunk
+exposes only `listAvailableCreditsForFamily(asOf)` for that future
+read path.
+
+### Applied state is structural, not a string
+
+The CHECK on `credits` says, in one line:
+
+    (status = 'applied') = (applied_to_invoice_id IS NOT NULL AND applied_at IS NOT NULL)
+
+Both halves of the equivalence have to agree. That catches both
+"`status='applied'` but no invoice link" and "linked to an invoice but
+status forgot to update" in a single constraint, which is structurally
+what we want — these two facts must move together.
+
+### Invoice numbering: per-school counter row
+
+The brief listed three acceptable shapes; we picked the
+`billing_counters` table. The reasoning:
+
+- Postgres `SEQUENCE`s are global, ignore RLS, and have allocation
+  semantics that don't compose cleanly with `withTenant`. They also
+  make per-school numbering awkward — you'd need one sequence per
+  school created at school-creation time, which is a footgun.
+- `MAX(invoice_number) + 1` reads avoid extra schema but require
+  parsing strings and a serializable transaction to be race-free. They
+  also conflate "the next number" with "the largest existing number,"
+  which breaks if a number is ever reserved without an insert.
+- A `billing_counters` table with one row per school lets Sprint 8 do
+  `SELECT … FOR UPDATE` inside the same transaction as the invoice
+  insert. The lock is row-scoped (so different schools allocate in
+  parallel), the counter is RLS-scoped just like every other table,
+  and the row's existence is itself an explicit per-school decision.
+
+The counter is created lazily — either by Sprint 8 on first invoice or
+by Sprint 4 onboarding alongside the billing profile, depending on
+which is simpler at that time.
+
+### What this chunk deliberately does not do
+
+- Generate invoices.
+- Apply credits to invoices (no `appliedTo` writes).
+- Transition invoice or credit statuses.
+- Talk to Stripe.
+- Reserve invoice numbers from `billing_counters`.
+
+All of the above belong to Sprint 8 and would be premature here. The
+schema, triggers, CHECKs, and reads are everything you need to *write
+into* and *render*, but nothing that produces or moves money.

@@ -9,11 +9,17 @@
 
 import type {
   AttendanceStatus,
+  BillingFrequency,
+  BillingProfileStatus,
   ClassSessionStatus,
   ClassStatus,
   CommunicationPreference,
+  CreditSource,
+  CreditStatus,
   EnrolmentFrequency,
   EnrolmentStatus,
+  InvoiceStatus,
+  PaymentMethodType,
   SkillStatus,
   StudentStatus,
   WeekDay,
@@ -146,6 +152,75 @@ export interface StudentSkill {
   studentId: string;
   skillId: string;
   status: SkillStatus;
+  note: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Billing primitives. Schema only this sprint — invoice generation, credit
+// application, and Stripe wiring are Sprint 8. All money fields are integer
+// cents; floats never appear on the billing path. GST values on invoice
+// lines are snapshotted at issue time and immutable thereafter.
+
+export interface BillingProfile {
+  id: string;
+  schoolId: string;
+  familyId: string;
+  billingFrequency: BillingFrequency;
+  billingAnchorDate: Date;
+  paymentMethodType: PaymentMethodType;
+  stripeCustomerId: string | null;
+  stripePaymentMethodId: string | null;
+  status: BillingProfileStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Invoice {
+  id: string;
+  schoolId: string;
+  familyId: string;
+  invoiceNumber: string;
+  periodStart: Date;
+  periodEnd: Date;
+  subtotalCents: number;
+  gstCents: number;
+  totalCents: number;
+  status: InvoiceStatus;
+  issuedAt: Date | null;
+  paidAt: Date | null;
+  dueAt: Date | null;
+  stripeInvoiceId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface InvoiceLine {
+  id: string;
+  schoolId: string;
+  invoiceId: string;
+  studentId: string;
+  enrolmentId: string | null;
+  description: string;
+  amountExGstCents: number;
+  gstAmountCents: number;
+  quantity: number;
+  lineTotalCents: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Credit {
+  id: string;
+  schoolId: string;
+  familyId: string;
+  studentId: string | null;
+  amountCents: number;
+  source: CreditSource;
+  expiresAt: Date | null;
+  status: CreditStatus;
+  appliedToInvoiceId: string | null;
+  appliedAt: Date | null;
   note: string | null;
   createdAt: Date;
   updatedAt: Date;

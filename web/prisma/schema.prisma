@@ -93,6 +93,57 @@ enum SkillStatus {
   @@map("skill_status")
 }
 
+enum BillingFrequency {
+  weekly
+  fortnightly
+
+  @@map("billing_frequency")
+}
+
+enum PaymentMethodType {
+  card
+  becs
+
+  @@map("payment_method_type")
+}
+
+enum BillingProfileStatus {
+  pending_setup
+  active
+  payment_failed
+  cancelled
+
+  @@map("billing_profile_status")
+}
+
+enum InvoiceStatus {
+  draft
+  issued
+  paid
+  overdue
+  void
+
+  @@map("invoice_status")
+}
+
+enum CreditSource {
+  school_cancellation
+  notified_absence
+  refund
+  manual
+
+  @@map("credit_source")
+}
+
+enum CreditStatus {
+  available
+  applied
+  expired
+  void
+
+  @@map("credit_status")
+}
+
 model School {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   slug      String    @unique
@@ -116,6 +167,12 @@ model School {
   attendance    Attendance[]
   skills        Skill[]
   studentSkills StudentSkill[]
+
+  billingProfiles BillingProfile[]
+  invoices        Invoice[]
+  invoiceLines    InvoiceLine[]
+  credits         Credit[]
+  billingCounter  BillingCounter?
 
   @@map("schools")
 }
@@ -195,8 +252,11 @@ model Family {
   updatedBy               String                  @map("updated_by") @db.Uuid
   deletedAt               DateTime?               @map("deleted_at") @db.Timestamptz(6)
 
-  school   School    @relation(fields: [schoolId], references: [id])
-  students Student[]
+  school         School          @relation(fields: [schoolId], references: [id])
+  students       Student[]
+  billingProfile BillingProfile?
+  invoices       Invoice[]
+  credits        Credit[]
 
   @@index([schoolId])
   @@index([schoolId, primaryContactEmail])
@@ -224,6 +284,8 @@ model Student {
   enrolments    Enrolment[]
   attendance    Attendance[]
   studentSkills StudentSkill[]
+  invoiceLines  InvoiceLine[]
+  credits       Credit[]
 
   @@index([schoolId])
   @@index([familyId])
@@ -305,10 +367,11 @@ model Enrolment {
   updatedBy String             @map("updated_by") @db.Uuid
   deletedAt DateTime?          @map("deleted_at") @db.Timestamptz(6)
 
-  school     School       @relation(fields: [schoolId], references: [id])
-  student    Student      @relation(fields: [studentId], references: [id])
-  class      Class        @relation(fields: [classId], references: [id])
-  attendance Attendance[]
+  school       School        @relation(fields: [schoolId], references: [id])
+  student      Student       @relation(fields: [studentId], references: [id])
+  class        Class         @relation(fields: [classId], references: [id])
+  attendance   Attendance[]
+  invoiceLines InvoiceLine[]
 
   @@index([schoolId, studentId])
   @@index([schoolId, classId])
@@ -416,4 +479,135 @@ model StudentSkill {
   @@index([schoolId, studentId])
   @@index([schoolId, skillId])
   @@map("student_skills")
+}
+
+model BillingProfile {
+  id                     String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId               String               @map("school_id") @db.Uuid
+  familyId               String               @unique @map("family_id") @db.Uuid
+  billingFrequency       BillingFrequency     @map("billing_frequency")
+  billingAnchorDate      DateTime             @map("billing_anchor_date") @db.Date
+  paymentMethodType      PaymentMethodType    @map("payment_method_type")
+  stripeCustomerId       String?              @map("stripe_customer_id")
+  stripePaymentMethodId  String?              @map("stripe_payment_method_id")
+  status                 BillingProfileStatus @default(pending_setup)
+  createdAt              DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy              String               @map("created_by") @db.Uuid
+  updatedBy              String               @map("updated_by") @db.Uuid
+  deletedAt              DateTime?            @map("deleted_at") @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id])
+  family Family @relation(fields: [familyId], references: [id])
+
+  @@index([schoolId])
+  @@index([schoolId, status])
+  @@map("billing_profiles")
+}
+
+model Invoice {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String        @map("school_id") @db.Uuid
+  familyId        String        @map("family_id") @db.Uuid
+  invoiceNumber   String        @map("invoice_number")
+  periodStart     DateTime      @map("period_start") @db.Date
+  periodEnd       DateTime      @map("period_end") @db.Date
+  subtotalCents   Int           @map("subtotal_cents")
+  gstCents        Int           @map("gst_cents")
+  totalCents      Int           @map("total_cents")
+  status          InvoiceStatus @default(draft)
+  issuedAt        DateTime?     @map("issued_at") @db.Timestamptz(6)
+  paidAt          DateTime?     @map("paid_at") @db.Timestamptz(6)
+  dueAt           DateTime?     @map("due_at") @db.Timestamptz(6)
+  stripeInvoiceId String?       @map("stripe_invoice_id")
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       String        @map("created_by") @db.Uuid
+  updatedBy       String        @map("updated_by") @db.Uuid
+  deletedAt       DateTime?     @map("deleted_at") @db.Timestamptz(6)
+
+  school        School        @relation(fields: [schoolId], references: [id])
+  family        Family        @relation(fields: [familyId], references: [id])
+  lines         InvoiceLine[]
+  appliedCredits Credit[]
+
+  @@unique([schoolId, invoiceNumber])
+  @@index([schoolId])
+  @@index([schoolId, familyId])
+  @@index([schoolId, status, dueAt])
+  @@index([schoolId, periodStart])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId          String    @map("school_id") @db.Uuid
+  invoiceId         String    @map("invoice_id") @db.Uuid
+  studentId         String    @map("student_id") @db.Uuid
+  enrolmentId       String?   @map("enrolment_id") @db.Uuid
+  description       String
+  amountExGstCents  Int       @map("amount_ex_gst_cents")
+  gstAmountCents    Int       @map("gst_amount_cents")
+  quantity          Int       @default(1)
+  lineTotalCents    Int       @map("line_total_cents")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy         String    @map("created_by") @db.Uuid
+  updatedBy         String    @map("updated_by") @db.Uuid
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  school    School     @relation(fields: [schoolId], references: [id])
+  invoice   Invoice    @relation(fields: [invoiceId], references: [id])
+  student   Student    @relation(fields: [studentId], references: [id])
+  enrolment Enrolment? @relation(fields: [enrolmentId], references: [id])
+
+  @@index([schoolId])
+  @@index([invoiceId])
+  @@index([schoolId, studentId])
+  @@index([schoolId, enrolmentId])
+  @@map("invoice_lines")
+}
+
+model Credit {
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId            String       @map("school_id") @db.Uuid
+  familyId            String       @map("family_id") @db.Uuid
+  studentId           String?      @map("student_id") @db.Uuid
+  amountCents         Int          @map("amount_cents")
+  source              CreditSource
+  expiresAt           DateTime?    @map("expires_at") @db.Timestamptz(6)
+  status              CreditStatus @default(available)
+  appliedToInvoiceId  String?      @map("applied_to_invoice_id") @db.Uuid
+  appliedAt           DateTime?    @map("applied_at") @db.Timestamptz(6)
+  note                String?
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy           String       @map("created_by") @db.Uuid
+  updatedBy           String       @map("updated_by") @db.Uuid
+  deletedAt           DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  school            School   @relation(fields: [schoolId], references: [id])
+  family            Family   @relation(fields: [familyId], references: [id])
+  student           Student? @relation(fields: [studentId], references: [id])
+  appliedToInvoice  Invoice? @relation(fields: [appliedToInvoiceId], references: [id])
+
+  @@index([schoolId])
+  @@index([schoolId, familyId])
+  @@index([schoolId, expiresAt])
+  @@map("credits")
+}
+
+// Per-school sequential counter used by Sprint 8 to allocate human-readable
+// invoice_number values like "INV-000001". One row per school, mutated under
+// SELECT … FOR UPDATE inside the invoice-creation transaction. Schema-only
+// here — no app code reads or writes it this chunk.
+model BillingCounter {
+  schoolId          String   @id @map("school_id") @db.Uuid
+  lastInvoiceNumber Int      @default(0) @map("last_invoice_number")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id])
+
+  @@map("billing_counters")
 }

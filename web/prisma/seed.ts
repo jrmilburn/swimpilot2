@@ -1972,6 +1972,270 @@ async function seedSessionsAndAttendance(
   }
 }
 
+async function seedBilling(prisma: PrismaClient, schoolSlug: string) {
+  // Sprint 8 owns invoice generation and credit application logic. This
+  // seed only writes plausible historical billing data so dev UI work in
+  // Sprints 4–7 has invoices and credits to render. Money is in integer
+  // cents throughout; GST is 10% AU. Idempotency keys:
+  //   billing_profiles  → unique family_id
+  //   billing_counters  → PK school_id (upsert via ON CONFLICT)
+  //   invoices          → unique (school_id, invoice_number)
+  //   invoice_lines     → matched on (invoice_id, student_id, description)
+  //   credits           → matched on (family_id, note)  (note holds a
+  //                       deterministic seed tag like "[seed] makeup")
+  const school = await prisma.school.findUnique({
+    where: { slug: schoolSlug },
+    select: { id: true },
+  });
+  if (!school) throw new Error(`seed: school ${schoolSlug} not found`);
+
+  const families = await prisma.family.findMany({
+    where: { schoolId: school.id },
+    select: {
+      id: true,
+      primaryContactEmail: true,
+      students: {
+        where: { status: { not: "withdrawn" } },
+        select: { id: true, firstName: true, lastName: true },
+        orderBy: { firstName: "asc" },
+      },
+    },
+    orderBy: { primaryContactEmail: "asc" },
+  });
+
+  // Per-school invoice number counter so seed runs allocate readable
+  // human-friendly numbers (e.g. RIV-000023). Stored as the
+  // billing_counters row Sprint 8 will allocate from.
+  const prefix = schoolSlug.slice(0, 3).toUpperCase();
+  let nextNum = 1;
+
+  const FREQUENCIES = ["weekly", "fortnightly"] as const;
+  const PAY_METHODS = ["card", "becs"] as const;
+  const PROFILE_STATUSES = [
+    "active",
+    "active",
+    "active",
+    "pending_setup",
+    "payment_failed",
+  ] as const;
+  const CREDIT_PLAN: Array<{
+    note: string;
+    amountCents: number;
+    source:
+      | "school_cancellation"
+      | "notified_absence"
+      | "refund"
+      | "manual";
+    status: "available" | "applied" | "void";
+    expiresInDays: number | null;
+  }> = [
+    {
+      note: "[seed] pool closure makeup",
+      amountCents: 2500,
+      source: "school_cancellation",
+      status: "available",
+      expiresInDays: 90,
+    },
+    {
+      note: "[seed] notified absence",
+      amountCents: 1500,
+      source: "notified_absence",
+      status: "available",
+      expiresInDays: 60,
+    },
+  ];
+
+  for (let i = 0; i < families.length; i += 1) {
+    const fam = families[i]!;
+    if (fam.students.length === 0) continue;
+
+    // Deterministic per-family choices keyed off index so re-runs are stable.
+    const frequency = FREQUENCIES[i % FREQUENCIES.length]!;
+    const paymentMethod = PAY_METHODS[i % PAY_METHODS.length]!;
+    const profileStatus = PROFILE_STATUSES[i % PROFILE_STATUSES.length]!;
+    // Anchor billing on a Monday in the current week.
+    const today = utcMidnightToday();
+    const dow = today.getUTCDay(); // 0=Sun
+    const daysSinceMonday = (dow + 6) % 7;
+    const anchor = new Date(today.getTime() - daysSinceMonday * MS_PER_DAY);
+
+    await prisma.$executeRaw`
+      INSERT INTO billing_profiles (
+        school_id, family_id, billing_frequency, billing_anchor_date,
+        payment_method_type, status, stripe_customer_id, stripe_payment_method_id,
+        created_by, updated_by, updated_at
+      ) VALUES (
+        ${school.id}::uuid, ${fam.id}::uuid,
+        ${frequency}::billing_frequency, ${isoDate(anchor)}::date,
+        ${paymentMethod}::payment_method_type,
+        ${profileStatus}::billing_profile_status,
+        ${profileStatus === "active" ? `cus_seed_${i}` : null},
+        ${profileStatus === "active" ? `pm_seed_${i}` : null},
+        ${SYSTEM_USER_ID}::uuid, ${SYSTEM_USER_ID}::uuid, now()
+      )
+      ON CONFLICT (family_id) DO UPDATE SET
+        billing_frequency = EXCLUDED.billing_frequency,
+        billing_anchor_date = EXCLUDED.billing_anchor_date,
+        payment_method_type = EXCLUDED.payment_method_type,
+        status = EXCLUDED.status,
+        stripe_customer_id = EXCLUDED.stripe_customer_id,
+        stripe_payment_method_id = EXCLUDED.stripe_payment_method_id,
+        updated_at = now()
+    `;
+
+    // Three historical invoices per family if profile is active. Pending /
+    // failed profiles get one issued invoice so the dev UI has something to
+    // render in those states too.
+    const periodCount = profileStatus === "active" ? 3 : 1;
+    for (let p = 0; p < periodCount; p += 1) {
+      // Period p=0 is the most recent past week; older periods stretch back.
+      const periodEnd = new Date(
+        anchor.getTime() - (p * 7 + 1) * MS_PER_DAY,
+      );
+      const periodStart = new Date(periodEnd.getTime() - 6 * MS_PER_DAY);
+      // Per-student line: $25 ex GST + $2.50 GST = $27.50 weekly.
+      const linePerStudent = 2500;
+      const gstPerStudent = 250;
+      const subtotal = linePerStudent * fam.students.length;
+      const gst = gstPerStudent * fam.students.length;
+      const total = subtotal + gst;
+
+      const invoiceNumber = `${prefix}-${String(nextNum).padStart(6, "0")}`;
+      nextNum += 1;
+
+      // Status mix: oldest = paid, middle = paid, newest = issued (or
+      // overdue if old enough). Pending/failed profile → status=draft.
+      let status: "draft" | "issued" | "paid" | "overdue" = "issued";
+      let issuedAt: Date | null = new Date(
+        periodEnd.getTime() + 1 * MS_PER_DAY,
+      );
+      let dueAt: Date | null = new Date(
+        periodEnd.getTime() + 8 * MS_PER_DAY,
+      );
+      let paidAt: Date | null = null;
+      if (profileStatus !== "active") {
+        status = "draft";
+        issuedAt = null;
+        dueAt = null;
+      } else if (p === 0) {
+        status = "issued";
+      } else {
+        status = "paid";
+        paidAt = new Date(periodEnd.getTime() + 5 * MS_PER_DAY);
+      }
+
+      const inserted = await prisma.$queryRaw<Array<{ id: string }>>`
+        INSERT INTO invoices (
+          school_id, family_id, invoice_number, period_start, period_end,
+          subtotal_cents, gst_cents, total_cents, status,
+          issued_at, due_at, paid_at,
+          created_by, updated_by, updated_at
+        ) VALUES (
+          ${school.id}::uuid, ${fam.id}::uuid, ${invoiceNumber},
+          ${isoDate(periodStart)}::date, ${isoDate(periodEnd)}::date,
+          ${subtotal}, ${gst}, ${total}, ${status}::invoice_status,
+          ${issuedAt}, ${dueAt}, ${paidAt},
+          ${SYSTEM_USER_ID}::uuid, ${SYSTEM_USER_ID}::uuid, now()
+        )
+        ON CONFLICT (school_id, invoice_number) DO UPDATE SET
+          period_start = EXCLUDED.period_start,
+          period_end = EXCLUDED.period_end,
+          subtotal_cents = EXCLUDED.subtotal_cents,
+          gst_cents = EXCLUDED.gst_cents,
+          total_cents = EXCLUDED.total_cents,
+          status = EXCLUDED.status,
+          issued_at = EXCLUDED.issued_at,
+          due_at = EXCLUDED.due_at,
+          paid_at = EXCLUDED.paid_at,
+          updated_at = now()
+        RETURNING id
+      `;
+      const invoiceId = inserted[0]!.id;
+
+      for (const stu of fam.students) {
+        const description = `Weekly lesson — ${stu.firstName} ${stu.lastName}`;
+        const existingLine = await prisma.invoiceLine.findFirst({
+          where: { invoiceId, studentId: stu.id, description },
+          select: { id: true },
+        });
+        if (existingLine) {
+          await prisma.$executeRaw`
+            UPDATE invoice_lines SET
+              amount_ex_gst_cents = ${linePerStudent},
+              gst_amount_cents = ${gstPerStudent},
+              quantity = 1,
+              line_total_cents = ${linePerStudent + gstPerStudent},
+              updated_at = now()
+            WHERE id = ${existingLine.id}::uuid
+          `;
+        } else {
+          await prisma.$executeRaw`
+            INSERT INTO invoice_lines (
+              school_id, invoice_id, student_id, description,
+              amount_ex_gst_cents, gst_amount_cents, quantity, line_total_cents,
+              created_by, updated_by, updated_at
+            ) VALUES (
+              ${school.id}::uuid, ${invoiceId}::uuid, ${stu.id}::uuid, ${description},
+              ${linePerStudent}, ${gstPerStudent}, 1, ${linePerStudent + gstPerStudent},
+              ${SYSTEM_USER_ID}::uuid, ${SYSTEM_USER_ID}::uuid, now()
+            )
+          `;
+        }
+      }
+    }
+
+    // One credit per family from the rotating plan; every fourth family
+    // also gets the second one so the dev UI sees families with multiple.
+    const creditsToWrite =
+      i % 4 === 0 ? CREDIT_PLAN : CREDIT_PLAN.slice(0, 1);
+    for (const c of creditsToWrite) {
+      const expiresAt =
+        c.expiresInDays === null
+          ? null
+          : new Date(
+              utcMidnightToday().getTime() + c.expiresInDays * MS_PER_DAY,
+            );
+      const existing = await prisma.credit.findFirst({
+        where: { familyId: fam.id, note: c.note },
+        select: { id: true },
+      });
+      if (existing) {
+        await prisma.$executeRaw`
+          UPDATE credits SET
+            amount_cents = ${c.amountCents},
+            source = ${c.source}::credit_source,
+            status = ${c.status}::credit_status,
+            expires_at = ${expiresAt},
+            updated_at = now()
+          WHERE id = ${existing.id}::uuid
+        `;
+      } else {
+        await prisma.$executeRaw`
+          INSERT INTO credits (
+            school_id, family_id, amount_cents, source, status, expires_at, note,
+            created_by, updated_by, updated_at
+          ) VALUES (
+            ${school.id}::uuid, ${fam.id}::uuid, ${c.amountCents},
+            ${c.source}::credit_source, ${c.status}::credit_status,
+            ${expiresAt}, ${c.note},
+            ${SYSTEM_USER_ID}::uuid, ${SYSTEM_USER_ID}::uuid, now()
+          )
+        `;
+      }
+    }
+  }
+
+  // Persist the per-school counter so Sprint 8's allocator picks up
+  // sequentially without colliding with seed-generated numbers.
+  await prisma.$executeRaw`
+    INSERT INTO billing_counters (school_id, last_invoice_number, updated_at)
+    VALUES (${school.id}::uuid, ${nextNum - 1}, now())
+    ON CONFLICT (school_id) DO UPDATE SET
+      last_invoice_number = EXCLUDED.last_invoice_number,
+      updated_at = now()
+  `;
+}
+
 async function main() {
   const url = process.env.ADMIN_DATABASE_URL;
   if (!url) {
@@ -2058,6 +2322,18 @@ async function main() {
     await seedStudentSkills(prisma, "coastal", COASTAL_STUDENT_SKILLS);
     const studentSkillCount = await prisma.studentSkill.count();
     console.log(`Seeded student_skills: ${studentSkillCount}`);
+
+    // Billing primitives — schema-only this sprint. Sprint 8 owns invoice
+    // generation; this just lays down realistic-looking historical data so
+    // dev UIs in earlier sprints have something to render.
+    await seedBilling(prisma, "riverside");
+    await seedBilling(prisma, "coastal");
+    const profileCount = await prisma.billingProfile.count();
+    const invoiceCount = await prisma.invoice.count();
+    const creditCount = await prisma.credit.count();
+    console.log(
+      `Seeded billing_profiles: ${profileCount}, invoices: ${invoiceCount}, credits: ${creditCount}`,
+    );
   } finally {
     await prisma.$disconnect();
   }

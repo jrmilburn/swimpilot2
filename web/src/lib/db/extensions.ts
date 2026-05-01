@@ -15,6 +15,10 @@ const DOMAIN_MODELS = new Set<string>([
   "Attendance",
   "Skill",
   "StudentSkill",
+  "BillingProfile",
+  "Invoice",
+  "InvoiceLine",
+  "Credit",
 ]);
 
 const WRITE_OPS = new Set<string>([

@@ -175,29 +175,38 @@ enum OnboardingStepStatus {
   @@map("onboarding_step_status")
 }
 
+enum PendingInvitationStatus {
+  pending
+  accepted
+  revoked
+  expired
+
+  @@map("pending_invitation_status")
+}
+
 model School {
-  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  slug                 String    @unique
-  name                 String
-  timezone             String
-  currency             String
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug                String    @unique
+  name                String
+  timezone            String
+  currency            String
   // Profile fields (Sprint 4 / Chunk 2). All nullable: a school can
   // skip the profile step legitimately, and the migration is safe on
   // pre-existing rows. `logoUrl` actually stores a Supabase Storage
   // path, not a resolvable URL — see docs/architecture.md "File storage".
-  legalName            String?   @map("legal_name")
-  tradingName          String?   @map("trading_name")
-  abn                  String?
-  gstRegistered        Boolean?  @map("gst_registered")
-  primaryContactName   String?   @map("primary_contact_name")
-  primaryContactEmail  String?   @map("primary_contact_email")
-  primaryContactPhone  String?   @map("primary_contact_phone")
-  logoUrl              String?   @map("logo_url")
-  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy            String    @map("created_by") @db.Uuid
-  updatedBy            String    @map("updated_by") @db.Uuid
-  deletedAt            DateTime? @map("deleted_at") @db.Timestamptz(6)
+  legalName           String?   @map("legal_name")
+  tradingName         String?   @map("trading_name")
+  abn                 String?
+  gstRegistered       Boolean?  @map("gst_registered")
+  primaryContactName  String?   @map("primary_contact_name")
+  primaryContactEmail String?   @map("primary_contact_email")
+  primaryContactPhone String?   @map("primary_contact_phone")
+  logoUrl             String?   @map("logo_url")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy           String    @map("created_by") @db.Uuid
+  updatedBy           String    @map("updated_by") @db.Uuid
+  deletedAt           DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   memberships   Membership[]
   locations     Location[]
@@ -211,13 +220,14 @@ model School {
   skills        Skill[]
   studentSkills StudentSkill[]
 
-  billingProfiles BillingProfile[]
-  invoices        Invoice[]
-  invoiceLines    InvoiceLine[]
-  credits         Credit[]
-  billingCounter  BillingCounter?
-  aiCalls         AiCall[]
+  billingProfiles    BillingProfile[]
+  invoices           Invoice[]
+  invoiceLines       InvoiceLine[]
+  credits            Credit[]
+  billingCounter     BillingCounter?
+  aiCalls            AiCall[]
   onboardingProgress OnboardingProgress?
+  pendingInvitations PendingInvitation[]
 
   @@map("schools")
 }
@@ -233,9 +243,11 @@ model User {
   updatedBy String?   @map("updated_by") @db.Uuid
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  memberships    Membership[]
-  taughtClasses  Class[]        @relation("ClassTeacher")
-  taughtSessions ClassSession[] @relation("ClassSessionTeacher")
+  memberships         Membership[]
+  taughtClasses       Class[]             @relation("ClassTeacher")
+  taughtSessions      ClassSession[]      @relation("ClassSessionTeacher")
+  invitedInvitations  PendingInvitation[] @relation("PendingInvitationInvitedBy")
+  acceptedInvitations PendingInvitation[] @relation("PendingInvitationAccepted")
 
   @@map("users")
 }
@@ -369,32 +381,35 @@ model ClassLevel {
 }
 
 model Class {
-  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId        String      @map("school_id") @db.Uuid
-  locationId      String      @map("location_id") @db.Uuid
-  levelId         String      @map("level_id") @db.Uuid
-  teacherId       String?     @map("teacher_id") @db.Uuid
-  dayOfWeek       WeekDay     @map("day_of_week")
-  startTime       DateTime    @map("start_time") @db.Time(0)
-  durationMinutes Int         @map("duration_minutes")
-  capacity        Int
-  status          ClassStatus @default(active)
-  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy       String      @map("created_by") @db.Uuid
-  updatedBy       String      @map("updated_by") @db.Uuid
-  deletedAt       DateTime?   @map("deleted_at") @db.Timestamptz(6)
+  id                         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId                   String      @map("school_id") @db.Uuid
+  locationId                 String      @map("location_id") @db.Uuid
+  levelId                    String      @map("level_id") @db.Uuid
+  teacherId                  String?     @map("teacher_id") @db.Uuid
+  pendingTeacherInvitationId String?     @map("pending_teacher_invitation_id") @db.Uuid
+  dayOfWeek                  WeekDay     @map("day_of_week")
+  startTime                  DateTime    @map("start_time") @db.Time(0)
+  durationMinutes            Int         @map("duration_minutes")
+  capacity                   Int
+  status                     ClassStatus @default(active)
+  createdAt                  DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy                  String      @map("created_by") @db.Uuid
+  updatedBy                  String      @map("updated_by") @db.Uuid
+  deletedAt                  DateTime?   @map("deleted_at") @db.Timestamptz(6)
 
-  school     School         @relation(fields: [schoolId], references: [id])
-  location   Location       @relation(fields: [locationId], references: [id])
-  level      ClassLevel     @relation(fields: [levelId], references: [id])
-  teacher    User?          @relation("ClassTeacher", fields: [teacherId], references: [id])
-  enrolments Enrolment[]
-  sessions   ClassSession[]
+  school                   School             @relation(fields: [schoolId], references: [id])
+  location                 Location           @relation(fields: [locationId], references: [id])
+  level                    ClassLevel         @relation(fields: [levelId], references: [id])
+  teacher                  User?              @relation("ClassTeacher", fields: [teacherId], references: [id])
+  pendingTeacherInvitation PendingInvitation? @relation(fields: [pendingTeacherInvitationId], references: [id])
+  enrolments               Enrolment[]
+  sessions                 ClassSession[]
 
   @@index([schoolId, locationId])
   @@index([schoolId, levelId])
   @@index([schoolId, teacherId])
+  @@index([schoolId, pendingTeacherInvitationId])
   @@index([schoolId, dayOfWeek, startTime])
   @@map("classes")
 }
@@ -532,20 +547,20 @@ model StudentSkill {
 }
 
 model BillingProfile {
-  id                     String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId               String               @map("school_id") @db.Uuid
-  familyId               String               @unique @map("family_id") @db.Uuid
-  billingFrequency       BillingFrequency     @map("billing_frequency")
-  billingAnchorDate      DateTime             @map("billing_anchor_date") @db.Date
-  paymentMethodType      PaymentMethodType    @map("payment_method_type")
-  stripeCustomerId       String?              @map("stripe_customer_id")
-  stripePaymentMethodId  String?              @map("stripe_payment_method_id")
-  status                 BillingProfileStatus @default(pending_setup)
-  createdAt              DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy              String               @map("created_by") @db.Uuid
-  updatedBy              String               @map("updated_by") @db.Uuid
-  deletedAt              DateTime?            @map("deleted_at") @db.Timestamptz(6)
+  id                    String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId              String               @map("school_id") @db.Uuid
+  familyId              String               @unique @map("family_id") @db.Uuid
+  billingFrequency      BillingFrequency     @map("billing_frequency")
+  billingAnchorDate     DateTime             @map("billing_anchor_date") @db.Date
+  paymentMethodType     PaymentMethodType    @map("payment_method_type")
+  stripeCustomerId      String?              @map("stripe_customer_id")
+  stripePaymentMethodId String?              @map("stripe_payment_method_id")
+  status                BillingProfileStatus @default(pending_setup)
+  createdAt             DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy             String               @map("created_by") @db.Uuid
+  updatedBy             String               @map("updated_by") @db.Uuid
+  deletedAt             DateTime?            @map("deleted_at") @db.Timestamptz(6)
 
   school School @relation(fields: [schoolId], references: [id])
   family Family @relation(fields: [familyId], references: [id])
@@ -576,9 +591,9 @@ model Invoice {
   updatedBy       String        @map("updated_by") @db.Uuid
   deletedAt       DateTime?     @map("deleted_at") @db.Timestamptz(6)
 
-  school        School        @relation(fields: [schoolId], references: [id])
-  family        Family        @relation(fields: [familyId], references: [id])
-  lines         InvoiceLine[]
+  school         School        @relation(fields: [schoolId], references: [id])
+  family         Family        @relation(fields: [familyId], references: [id])
+  lines          InvoiceLine[]
   appliedCredits Credit[]
 
   @@unique([schoolId, invoiceNumber])
@@ -590,21 +605,21 @@ model Invoice {
 }
 
 model InvoiceLine {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId          String    @map("school_id") @db.Uuid
-  invoiceId         String    @map("invoice_id") @db.Uuid
-  studentId         String    @map("student_id") @db.Uuid
-  enrolmentId       String?   @map("enrolment_id") @db.Uuid
-  description       String
-  amountExGstCents  Int       @map("amount_ex_gst_cents")
-  gstAmountCents    Int       @map("gst_amount_cents")
-  quantity          Int       @default(1)
-  lineTotalCents    Int       @map("line_total_cents")
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy         String    @map("created_by") @db.Uuid
-  updatedBy         String    @map("updated_by") @db.Uuid
-  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String    @map("school_id") @db.Uuid
+  invoiceId        String    @map("invoice_id") @db.Uuid
+  studentId        String    @map("student_id") @db.Uuid
+  enrolmentId      String?   @map("enrolment_id") @db.Uuid
+  description      String
+  amountExGstCents Int       @map("amount_ex_gst_cents")
+  gstAmountCents   Int       @map("gst_amount_cents")
+  quantity         Int       @default(1)
+  lineTotalCents   Int       @map("line_total_cents")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy        String    @map("created_by") @db.Uuid
+  updatedBy        String    @map("updated_by") @db.Uuid
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   school    School     @relation(fields: [schoolId], references: [id])
   invoice   Invoice    @relation(fields: [invoiceId], references: [id])
@@ -619,27 +634,27 @@ model InvoiceLine {
 }
 
 model Credit {
-  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId            String       @map("school_id") @db.Uuid
-  familyId            String       @map("family_id") @db.Uuid
-  studentId           String?      @map("student_id") @db.Uuid
-  amountCents         Int          @map("amount_cents")
-  source              CreditSource
-  expiresAt           DateTime?    @map("expires_at") @db.Timestamptz(6)
-  status              CreditStatus @default(available)
-  appliedToInvoiceId  String?      @map("applied_to_invoice_id") @db.Uuid
-  appliedAt           DateTime?    @map("applied_at") @db.Timestamptz(6)
-  note                String?
-  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy           String       @map("created_by") @db.Uuid
-  updatedBy           String       @map("updated_by") @db.Uuid
-  deletedAt           DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  id                 String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId           String       @map("school_id") @db.Uuid
+  familyId           String       @map("family_id") @db.Uuid
+  studentId          String?      @map("student_id") @db.Uuid
+  amountCents        Int          @map("amount_cents")
+  source             CreditSource
+  expiresAt          DateTime?    @map("expires_at") @db.Timestamptz(6)
+  status             CreditStatus @default(available)
+  appliedToInvoiceId String?      @map("applied_to_invoice_id") @db.Uuid
+  appliedAt          DateTime?    @map("applied_at") @db.Timestamptz(6)
+  note               String?
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy          String       @map("created_by") @db.Uuid
+  updatedBy          String       @map("updated_by") @db.Uuid
+  deletedAt          DateTime?    @map("deleted_at") @db.Timestamptz(6)
 
-  school            School   @relation(fields: [schoolId], references: [id])
-  family            Family   @relation(fields: [familyId], references: [id])
-  student           Student? @relation(fields: [studentId], references: [id])
-  appliedToInvoice  Invoice? @relation(fields: [appliedToInvoiceId], references: [id])
+  school           School   @relation(fields: [schoolId], references: [id])
+  family           Family   @relation(fields: [familyId], references: [id])
+  student          Student? @relation(fields: [studentId], references: [id])
+  appliedToInvoice Invoice? @relation(fields: [appliedToInvoiceId], references: [id])
 
   @@index([schoolId])
   @@index([schoolId, familyId])
@@ -685,22 +700,57 @@ model AiCall {
 // (see the 20260501130000_add_onboarding_progress migration); there is no
 // app-side path that creates this row directly.
 model OnboardingProgress {
-  schoolId       String               @id @map("school_id") @db.Uuid
-  currentStep    OnboardingStep       @default(profile) @map("current_step")
+  schoolId       String         @id @map("school_id") @db.Uuid
+  currentStep    OnboardingStep @default(profile) @map("current_step")
   // JSONB keyed by OnboardingStep value (excluding `done`), valued by
   // OnboardingStepStatus. Repository owns parsing/validating the shape.
-  stepStatuses   Json                 @default("{}") @map("step_statuses")
-  lastActivityAt DateTime             @default(now()) @map("last_activity_at") @db.Timestamptz(6)
-  completedAt    DateTime?            @map("completed_at") @db.Timestamptz(6)
-  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy      String               @map("created_by") @db.Uuid
-  updatedBy      String               @map("updated_by") @db.Uuid
-  deletedAt      DateTime?            @map("deleted_at") @db.Timestamptz(6)
+  stepStatuses   Json           @default("{}") @map("step_statuses")
+  lastActivityAt DateTime       @default(now()) @map("last_activity_at") @db.Timestamptz(6)
+  completedAt    DateTime?      @map("completed_at") @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String         @map("created_by") @db.Uuid
+  updatedBy      String         @map("updated_by") @db.Uuid
+  deletedAt      DateTime?      @map("deleted_at") @db.Timestamptz(6)
 
   school School @relation(fields: [schoolId], references: [id])
 
   @@map("onboarding_progress")
+}
+
+// Sprint 5 / Chunk 1: pending teacher invitations. Bridges the gap between
+// "operator clicked Invite" and "invitee accepted and we have a real
+// membership." A row's `status` evolves pending → (accepted | revoked |
+// expired). The Teachers step renders pending rows alongside real teachers
+// in the roster, and `Class.pendingTeacherInvitationId` lets a class
+// "park" an assignment under a pending invite. The mutual-exclusion CHECK
+// on `classes` ensures (teacher_id, pending_teacher_invitation_id) carry
+// at most one non-null at a time.
+model PendingInvitation {
+  id                String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId          String                  @map("school_id") @db.Uuid
+  email             String
+  role              Role
+  clerkInvitationId String?                 @map("clerk_invitation_id")
+  invitedByUserId   String                  @map("invited_by_user_id") @db.Uuid
+  status            PendingInvitationStatus @default(pending)
+  acceptedUserId    String?                 @map("accepted_user_id") @db.Uuid
+  acceptedAt        DateTime?               @map("accepted_at") @db.Timestamptz(6)
+  expiresAt         DateTime?               @map("expires_at") @db.Timestamptz(6)
+  createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy         String                  @map("created_by") @db.Uuid
+  updatedBy         String                  @map("updated_by") @db.Uuid
+  deletedAt         DateTime?               @map("deleted_at") @db.Timestamptz(6)
+
+  school       School  @relation(fields: [schoolId], references: [id])
+  invitedBy    User    @relation("PendingInvitationInvitedBy", fields: [invitedByUserId], references: [id])
+  acceptedUser User?   @relation("PendingInvitationAccepted", fields: [acceptedUserId], references: [id])
+  classes      Class[]
+
+  @@index([schoolId])
+  @@index([schoolId, status])
+  @@map("pending_invitations")
 }
 
 // Per-school sequential counter used by Sprint 8 to allocate human-readable

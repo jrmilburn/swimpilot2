@@ -38,7 +38,11 @@ import { applyAssaDefaults } from "../../src/app/s/[schoolSlug]/onboarding/level
 import { markLevelsComplete } from "../../src/app/s/[schoolSlug]/onboarding/levels/_actions/markLevelsComplete";
 import { applyAssaSkillsForLevel } from "../../src/app/s/[schoolSlug]/onboarding/skills/_actions/applyAssaSkillsForLevel";
 import { markSkillsComplete } from "../../src/app/s/[schoolSlug]/onboarding/skills/_actions/markSkillsComplete";
-import { skipRemainingOnboarding } from "../../src/app/s/[schoolSlug]/onboarding/classes/_actions/skipRemainingOnboarding";
+import { addClass } from "../../src/app/s/[schoolSlug]/onboarding/classes/_actions/addClass";
+import { markClassesComplete } from "../../src/app/s/[schoolSlug]/onboarding/classes/_actions/markClassesComplete";
+import { markTeachersComplete } from "../../src/app/s/[schoolSlug]/onboarding/teachers/_actions/markTeachersComplete";
+import { markImportComplete } from "../../src/app/s/[schoolSlug]/onboarding/import/_actions/markImportComplete";
+import { WeekDay } from "../../src/domain/enums";
 
 const admin = new PrismaClient({
   datasources: { db: { url: process.env.ADMIN_DATABASE_URL! } },
@@ -67,9 +71,12 @@ async function seed() {
 }
 
 async function resetProgress() {
-  await admin.$executeRawUnsafe(`DELETE FROM locations`);
+  // Order matters — classes FK locations and class_levels, so they must
+  // go first. skills FK class_levels too.
+  await admin.$executeRawUnsafe(`DELETE FROM classes`);
   await admin.$executeRawUnsafe(`DELETE FROM skills`);
   await admin.$executeRawUnsafe(`DELETE FROM class_levels`);
+  await admin.$executeRawUnsafe(`DELETE FROM locations`);
   await admin.$executeRaw`
     UPDATE schools
        SET legal_name = NULL, trading_name = NULL, abn = NULL,
@@ -121,12 +128,12 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: { code: s
   return result.data;
 }
 
-// End-to-end journey through the four-step Sprint 4 wizard plus the
-// Sprint 5 stub. The per-step tests cover field-level validation; this
-// test exists to catch regressions in the seams *between* chunks —
-// completing Profile lands you in Locations, the Skills→Classes
-// short-circuit reversal stayed reversed, the stub's
-// `skipRemainingOnboarding` flips the wizard to `done`.
+// End-to-end journey through the seven-step wizard. The per-step tests
+// cover field-level validation; this test exists to catch regressions
+// in the seams *between* chunks — completing Profile lands you in
+// Locations, Skills advances to Classes (no short-circuit), Classes
+// advances to Teachers, Teachers to Import, and Import is the seam
+// that flips `completed_at`.
 //
 // Two journeys: one saving real data at every step, one skipping every
 // skip-able step. Locations cannot be skipped (Chunk 3 contract) so its
@@ -223,9 +230,42 @@ describe("onboardingJourney", () => {
       expect(data.completedAt).toBeNull();
     }
 
-    // 5. Classes stub — skipRemainingOnboarding completes the wizard
+    // 5. Classes — add one against the position-zero level + the only
+    //    seeded location, then mark complete. Capacity is held at level
+    //    ratio for simplicity.
+    const location = (await admin.location.findFirst({
+      where: { schoolId: RIVERSIDE_ID },
+    }))!;
+    unwrap(
+      await addClass({
+        levelId: positionZero.id,
+        locationId: location.id,
+        dayOfWeek: WeekDay.Monday,
+        startTime: "16:00",
+        durationMinutes: 30,
+        capacity: Math.min(positionZero.ratio, 4),
+      }),
+    );
     {
-      const data = unwrap(await skipRemainingOnboarding());
+      const data = unwrap(await markClassesComplete({ skip: false }));
+      expect(data.currentStep).toBe(OnboardingStep.Teachers);
+      expect(data.stepStatuses[OnboardingStep.Classes]).toBe(
+        OnboardingStepStatus.Completed,
+      );
+      expect(data.completedWizard).toBe(false);
+    }
+
+    // 6. Teachers — no count gate; finish without any invitations.
+    {
+      const data = unwrap(await markTeachersComplete({ skip: false }));
+      expect(data.currentStep).toBe(OnboardingStep.Import);
+      expect(data.completedWizard).toBe(false);
+      expect(data.completedAt).toBeNull();
+    }
+
+    // 7. Import — the seam that flips `completed_at`.
+    {
+      const data = unwrap(await markImportComplete({ skip: false }));
       expect(data.currentStep).toBe(OnboardingStep.Done);
       expect(data.completedAt).not.toBeNull();
       expect(data.completedWizard).toBe(true);
@@ -286,9 +326,29 @@ describe("onboardingJourney", () => {
       expect(data.completedAt).toBeNull();
     }
 
-    // Classes stub — finalise
+    // Classes — skip (no row required for the skip path)
     {
-      const data = unwrap(await skipRemainingOnboarding());
+      const data = unwrap(await markClassesComplete({ skip: true }));
+      expect(data.stepStatuses[OnboardingStep.Classes]).toBe(
+        OnboardingStepStatus.Skipped,
+      );
+      expect(data.currentStep).toBe(OnboardingStep.Teachers);
+      expect(data.completedAt).toBeNull();
+    }
+
+    // Teachers — skip
+    {
+      const data = unwrap(await markTeachersComplete({ skip: true }));
+      expect(data.stepStatuses[OnboardingStep.Teachers]).toBe(
+        OnboardingStepStatus.Skipped,
+      );
+      expect(data.currentStep).toBe(OnboardingStep.Import);
+      expect(data.completedAt).toBeNull();
+    }
+
+    // Import — skip closes the wizard
+    {
+      const data = unwrap(await markImportComplete({ skip: true }));
       expect(data.currentStep).toBe(OnboardingStep.Done);
       expect(data.completedAt).not.toBeNull();
       expect(data.completedWizard).toBe(true);

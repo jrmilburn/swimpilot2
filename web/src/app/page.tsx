@@ -13,6 +13,7 @@ import {
   listUserMemberships,
   type UserMembership,
 } from "@/repositories/tenantRepository";
+import { resolveAcceptedInvitation } from "@/lib/auth/resolveAcceptedInvitation";
 
 const LAST_SCHOOL_COOKIE = "swp_last_school";
 
@@ -23,6 +24,14 @@ export default async function Home() {
   }
 
   const dbUser = await resolveDbUser(clerkUserId);
+
+  // Sign-in-redirect path: if this user has any still-pending Clerk
+  // invitations matching their email, finalise them before listing
+  // memberships. Idempotent — a second pass after acceptance no-ops.
+  // Failures are caught per-invitation inside the helper so a single
+  // bad row can't block sign-in.
+  await resolveAcceptedInvitation(dbUser.id, dbUser.email);
+
   const memberships = await listUserMemberships(dbUser.id);
 
   if (memberships.length === 0) {

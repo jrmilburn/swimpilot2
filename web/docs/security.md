@@ -299,3 +299,89 @@ before allowing a ratio reduction. We chose not to add a defensive
 trigger on `class_levels.ratio` because the alternative — scanning
 every class on each level update — pays write cost for an invariant
 that only operator-driven flows can violate.
+
+### `classes` atomic-swap on assignment
+
+`classes` carries two mutually exclusive teacher columns: `teacher_id`
+(the real, signed-up teacher) and `pending_teacher_invitation_id` (a
+class "parked" on a pending invitation that resolves into a real
+teacher when the invitee accepts). A `CHECK` constraint —
+`NOT (teacher_id IS NOT NULL AND pending_teacher_invitation_id IS NOT NULL)`
+— rejects rows that have both populated.
+
+The constraint dictates a write contract: every assignment change
+must be a single UPDATE that sets both columns at once. Two
+sequential UPDATEs (clear one, then set the other) leave the row in a
+mid-state where both are null — fine for `CHECK` but visible to other
+transactions and a step backward in our invariant chain. The
+`assignTeacherToClass` and `unassignTeacherFromClass` actions, plus
+the invitation-acceptance handler in `resolveAcceptedInvitation`, all
+issue exactly one UPDATE per swap.
+
+## Pending invitations: cross-tenant lookup at sign-in
+
+When an operator invites a teacher by email, two rows land:
+
+1. A Clerk invitation (so the invitee gets the email + magic link).
+2. A `pending_invitations` row in `swimpilot_app`'s database, scoped
+   to the inviting school, with `status='pending'` and a
+   `clerk_invitation_id` cross-reference.
+
+When the invitee follows the magic link and signs in for the first
+time, the app needs to:
+
+- find every pending invitation for **their email address** across
+  every school they've been invited to (a single user can be invited
+  to multiple schools before their first sign-in),
+- create membership rows in each of those schools,
+- mark each invitation as accepted,
+- transfer any classes parked on that invitation onto the new
+  membership.
+
+The lookup in step 1 is the same shape as `app_resolve_tenant`: it
+must read across schools **before** any tenant context can be set.
+With no `app.school_id`, RLS on `pending_invitations` returns zero
+rows. We can't pick a school to scope to — the whole point is to
+discover which schools the invitee belongs in.
+
+The seam is a third SECURITY DEFINER function alongside
+`app_resolve_tenant` and `app_list_user_memberships`:
+
+- `app_find_pending_invitations_for_email(p_email text)` →
+  `(invitation_id uuid, school_id uuid, role role, email citext)`
+  rows for every `status='pending' AND deleted_at IS NULL`
+  invitation whose lower-cased email matches the argument.
+
+The same trade-off applies as the other two functions: the app role
+gets EXECUTE on this function, not blanket SELECT on
+`pending_invitations`. The projection is fixed (no full row), and the
+filter is hardcoded to `status='pending'` so the function can't be
+coaxed into surfacing accepted/revoked rows. The function is defined
+in the chunk migration that introduces `pending_invitations`
+(`20260525120000_add_pending_invitations_and_class_pending_teacher`).
+
+### Why sign-in-redirect, not a webhook
+
+Clerk emits webhook events when an invitation is accepted; the
+obvious alternative is to listen for the webhook and run the
+acceptance machinery off-band. We chose against it:
+
+- A webhook handler is a new public endpoint with its own
+  authentication story (signature verification) and its own failure
+  mode (delivery retries, ordering). The sign-in-redirect path uses
+  the same Clerk session the user already authenticated with — no
+  extra surface.
+- The acceptance work has to happen synchronously anyway: the user
+  expects to land on the school dashboard in their first request, not
+  whenever the webhook eventually delivers. A webhook would force a
+  "you're being set up, please refresh" interstitial.
+- Clerk's webhook event contains the invitation id but not the email;
+  matching across schools still needs the same `app_find_pending_…`
+  lookup. The webhook path gains us nothing beyond a second code path
+  that has to stay in sync.
+
+The handler lives in `src/lib/auth/resolveAcceptedInvitation.ts` and
+is invoked from the post-sign-in landing page (`src/app/page.tsx`)
+between resolving the DB user and listing memberships. Each
+invitation is processed in its own `withTenant` transaction so a
+failure in one school's acceptance doesn't roll back the others.

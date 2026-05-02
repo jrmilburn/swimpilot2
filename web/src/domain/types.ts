@@ -21,6 +21,8 @@ import type {
   InvoiceStatus,
   OnboardingStep,
   PaymentMethodType,
+  PendingInvitationStatus,
+  Role,
   SkillStatus,
   StudentStatus,
   WeekDay,
@@ -102,6 +104,12 @@ export interface Class {
   locationId: string;
   levelId: string;
   teacherId: string | null;
+  // Sprint 5 / Chunk 1. Set when the operator parks the class on a
+  // pending teacher invitation. Mutually exclusive with `teacherId` —
+  // the row-level CHECK on `classes` refuses both being non-null at
+  // once. On invitation acceptance, an atomic UPDATE flips
+  // `teacherId = X, pendingTeacherInvitationId = null`.
+  pendingTeacherInvitationId: string | null;
   dayOfWeek: WeekDay;
   startTime: string;
   durationMinutes: number;
@@ -238,6 +246,29 @@ export interface OnboardingProgress {
   stepStatuses: StepStatusMap;
   lastActivityAt: Date;
   completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Sprint 5 / Chunk 1. A pending row models "we sent an invite, the
+// invitee hasn't signed up yet." `clerkInvitationId` is the Clerk
+// `Invitation.id` we stored at create time so we can revoke through
+// Clerk's API later. `status` evolves
+// pending → (accepted | revoked | expired). On acceptance, Sprint 5's
+// `resolveAcceptedInvitation` flips the row, materialises the membership,
+// and atomically swaps any class that parked on this invitation onto the
+// new `teacher_id`.
+export interface PendingInvitation {
+  id: string;
+  schoolId: string;
+  email: string;
+  role: Role;
+  clerkInvitationId: string | null;
+  invitedByUserId: string;
+  status: PendingInvitationStatus;
+  acceptedUserId: string | null;
+  acceptedAt: Date | null;
+  expiresAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

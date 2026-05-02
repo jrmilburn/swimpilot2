@@ -8,8 +8,8 @@ import { ValidationError } from "@/lib/errors";
 // Caps. Decision-flagged: the importer is for onboarding's "first roster",
 // not for arbitrary bulk loads. Larger CSVs should be split or routed to
 // the (post-Sprint-6) admin importer.
-export const MAX_CSV_BYTES = 1_000_000; // 1 MB
-export const MAX_CSV_ROWS = 1_000;
+const MAX_CSV_BYTES = 1_000_000; // 1 MB
+const MAX_CSV_ROWS = 1_000;
 
 const Input = z.object({
   csvText: z.string().min(1, "CSV is empty"),

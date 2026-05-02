@@ -21,6 +21,7 @@ const DOMAIN_MODELS = new Set<string>([
   "Credit",
   "AiCall",
   "OnboardingProgress",
+  "PendingInvitation",
 ]);
 
 const WRITE_OPS = new Set<string>([

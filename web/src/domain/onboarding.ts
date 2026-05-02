@@ -4,10 +4,12 @@ import { OnboardingStep, type OnboardingStepStatus } from "./enums";
 // (`onboarding_step`) carries the same values but Postgres orders them
 // alphabetically; the wizard's progression is decided here, in TypeScript.
 //
-// Sprint 4 / Chunk 1 ships only the first four (profile / locations /
-// levels / skills); subsequent chunks (Sprint 5+) flip on the rest. The
-// wizard layout filters this list to the four visible steps via
-// `WIZARD_STEPS` below.
+// Sprint 5 / Chunk 1 reorders Billing and Channels to the tail of the
+// list. They aren't shipped as wizard steps yet — putting them after
+// Import keeps `nextStepAfter(Teachers) === Import` and
+// `nextStepAfter(Import) === Billing → Channels → Done`. As Sprint 6+
+// ships those steps the order can stay; if the editorial order needs
+// to change later, this constant is the only place to touch.
 export const ONBOARDING_STEP_ORDER = [
   OnboardingStep.Profile,
   OnboardingStep.Locations,
@@ -15,9 +17,9 @@ export const ONBOARDING_STEP_ORDER = [
   OnboardingStep.Skills,
   OnboardingStep.Classes,
   OnboardingStep.Teachers,
+  OnboardingStep.Import,
   OnboardingStep.Billing,
   OnboardingStep.Channels,
-  OnboardingStep.Import,
 ] as const;
 
 export type OnboardingStepCode = (typeof ONBOARDING_STEP_ORDER)[number];
@@ -27,22 +29,26 @@ export type OnboardingStepCode = (typeof ONBOARDING_STEP_ORDER)[number];
 // the visible steps are an editorial decision, not a side-effect of array
 // indexing.
 //
-// Sprint 4 / Chunk 6 added `classes` so the Sprint 5 stub page renders
-// inside the wizard chrome with the progress indicator highlighting it.
-// The stub at `/onboarding/classes` is replaced by Sprint 5's real
-// classes step.
+// Sprint 5 / Chunk 1 extends WIZARD_STEPS to seven entries: the real
+// classes editor lands at `/onboarding/classes`, Teachers ships at
+// `/onboarding/teachers`, and a final Import stub renders at
+// `/onboarding/import` so operators can wrap up the wizard. Billing /
+// Channels remain parked at the end of `ONBOARDING_STEP_ORDER` and
+// are not visible in the chrome until their chunks ship.
 export const WIZARD_STEPS = [
   OnboardingStep.Profile,
   OnboardingStep.Locations,
   OnboardingStep.Levels,
   OnboardingStep.Skills,
   OnboardingStep.Classes,
+  OnboardingStep.Teachers,
+  OnboardingStep.Import,
 ] as const satisfies readonly OnboardingStepCode[];
 
-// `WizardStep` names the four steps actually rendered by the wizard
-// chrome (the type of an item in `WIZARD_STEPS`). `OnboardingStepCode`
-// (above) covers all nine non-`done` codes — useful for code that
-// reasons about steps that exist in the DB but aren't yet wizard-visible.
+// `WizardStep` names the steps actually rendered by the wizard chrome
+// (the type of an item in `WIZARD_STEPS`). `OnboardingStepCode` covers
+// all nine non-`done` codes — useful for code that reasons about steps
+// that exist in the DB but aren't yet wizard-visible.
 export type WizardStep = (typeof WIZARD_STEPS)[number];
 
 export const WIZARD_STEP_LABELS: Record<OnboardingStepCode, string> = {

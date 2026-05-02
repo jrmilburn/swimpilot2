@@ -145,3 +145,25 @@ export const OnboardingStepStatus = {
 } as const;
 export type OnboardingStepStatus =
   (typeof OnboardingStepStatus)[keyof typeof OnboardingStepStatus];
+
+export const PendingInvitationStatus = {
+  Pending: "pending",
+  Accepted: "accepted",
+  Revoked: "revoked",
+  Expired: "expired",
+} as const;
+export type PendingInvitationStatus =
+  (typeof PendingInvitationStatus)[keyof typeof PendingInvitationStatus];
+
+// Domain mirror of the Prisma `Role` enum. The values are byte-for-byte
+// identical so an instance of either is assignable to the other.
+// Repositories that talk to Prisma can keep importing `Role` from
+// `@prisma/client` (or from `tenantRepository` re-exporting it); domain
+// code that only needs the string union should import from here.
+export const Role = {
+  Owner: "owner",
+  Manager: "manager",
+  Teacher: "teacher",
+  FrontDesk: "front_desk",
+} as const;
+export type Role = (typeof Role)[keyof typeof Role];

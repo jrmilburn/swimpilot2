@@ -1,0 +1,6 @@
+parent_name,parent_email,parent_phone,first_name,last_name,dob,level,day,time,frequency
+Sarah Patel,sarah.patel@example.com,0412345678,Aarav Patel,Patel,12/03/2018,Beginner,Monday,16:00,weekly
+Sarah Patel,sarah.patel@example.com,0412345678,Anika Patel,Patel,04/07/2020,Beginner,Monday,16:00,weekly
+Tom Nguyen,tom.nguyen@example.com,0498765432,Mia Nguyen,Nguyen,2019-09-14,Intermediate,Wednesday,17:30,fortnightly
+Helen Brown,helen.brown@example.com,,Oliver Brown,Brown,11/01/2017,Intermediate,Wednesday,17:30,weekly
+Jane Wilson,jane.wilson@example.com,,Eli Wilson,Wilson,2016-05-22,Advanced,Saturday,9:00 AM,weekly

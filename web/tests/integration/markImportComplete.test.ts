@@ -80,6 +80,9 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.mocked(auth).mockReset();
   headerStore.current = new Headers();
+  await admin.$executeRawUnsafe(
+    `TRUNCATE import_batches RESTART IDENTITY CASCADE`,
+  );
   await resetProgressToImport(RIVERSIDE_ID);
 });
 
@@ -95,10 +98,40 @@ function setSlug(slug: string) {
   headerStore.current = new Headers({ "x-school-slug": slug });
 }
 
+async function seedOneCommittedBatch(schoolId: string) {
+  await admin.$executeRaw`
+    INSERT INTO import_batches (
+      id, school_id, mapping, row_count, family_count, student_count,
+      enrolment_count, committed_at, created_by, updated_by, updated_at
+    ) VALUES (
+      gen_random_uuid(), ${schoolId}::uuid, '{}'::jsonb, 0, 0, 0, 0,
+      now(), ${SOLO_USER}::uuid, ${SOLO_USER}::uuid, now()
+    )
+  `;
+}
+
 describe("markImportComplete", () => {
-  test("save flips completed_at, sets current_step=done, returns completedWizard=true", async () => {
+  test("save with no committed batch fails validation", async () => {
     mockAuth(SOLO_CLERK);
     setSlug("riverside");
+
+    const result = await markImportComplete({ skip: false });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("VALIDATION");
+    expect(result.error.message).toMatch(/Import at least one CSV/i);
+
+    const row = await admin.onboardingProgress.findUnique({
+      where: { schoolId: RIVERSIDE_ID },
+    });
+    // Wizard not completed.
+    expect(row?.completedAt).toBeNull();
+  });
+
+  test("save with committed batch flips completed_at, sets current_step=done", async () => {
+    mockAuth(SOLO_CLERK);
+    setSlug("riverside");
+    await seedOneCommittedBatch(RIVERSIDE_ID);
 
     const result = await markImportComplete({ skip: false });
     expect(result.ok).toBe(true);
@@ -137,6 +170,7 @@ describe("markImportComplete", () => {
   test("calling twice is idempotent — completed_at stays set", async () => {
     mockAuth(SOLO_CLERK);
     setSlug("riverside");
+    await seedOneCommittedBatch(RIVERSIDE_ID);
 
     const first = await markImportComplete({ skip: false });
     expect(first.ok).toBe(true);

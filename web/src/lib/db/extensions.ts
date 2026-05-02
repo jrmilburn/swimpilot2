@@ -22,6 +22,7 @@ const DOMAIN_MODELS = new Set<string>([
   "AiCall",
   "OnboardingProgress",
   "PendingInvitation",
+  "ImportBatch",
 ]);
 
 const WRITE_OPS = new Set<string>([

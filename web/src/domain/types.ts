@@ -273,6 +273,41 @@ export interface PendingInvitation {
   updatedAt: Date;
 }
 
+// Sprint 5 / Chunk 2. One row per committed CSV import. The mapping is
+// stored verbatim (jsonb) so audit / replay see the exact shape the
+// operator confirmed. `rolledBackAt` is a single nullable timestamp —
+// presence-and-timing in one column instead of a status enum.
+export interface ImportBatch {
+  id: string;
+  schoolId: string;
+  mapping: ImportMapping;
+  rowCount: number;
+  familyCount: number;
+  studentCount: number;
+  enrolmentCount: number;
+  committedAt: Date;
+  rolledBackAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// The serialised column→target mapping the operator confirmed before
+// commit. Keys are the source CSV's column headers (verbatim, post-
+// trim); values are SwimPilot target field paths or "ignore".
+export type ImportTargetField =
+  | "family.primary_contact_name"
+  | "family.primary_contact_email"
+  | "family.primary_contact_phone"
+  | "student.first_name"
+  | "student.last_name"
+  | "student.date_of_birth"
+  | "enrolment.level_name"
+  | "enrolment.day"
+  | "enrolment.time"
+  | "enrolment.frequency";
+
+export type ImportMapping = Record<string, ImportTargetField | "ignore">;
+
 export interface Credit {
   id: string;
   schoolId: string;

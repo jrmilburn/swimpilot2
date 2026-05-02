@@ -72,7 +72,13 @@ async function seed() {
 
 async function resetProgress() {
   // Order matters — classes FK locations and class_levels, so they must
-  // go first. skills FK class_levels too.
+  // go first. skills FK class_levels too. Imports FK families/students/
+  // enrolments (which themselves can FK an import_batch row), so wipe
+  // them in dependency order before we touch the wizard's progress row.
+  await admin.$executeRawUnsafe(`DELETE FROM enrolments`);
+  await admin.$executeRawUnsafe(`DELETE FROM students`);
+  await admin.$executeRawUnsafe(`DELETE FROM families`);
+  await admin.$executeRawUnsafe(`DELETE FROM import_batches`);
   await admin.$executeRawUnsafe(`DELETE FROM classes`);
   await admin.$executeRawUnsafe(`DELETE FROM skills`);
   await admin.$executeRawUnsafe(`DELETE FROM class_levels`);
@@ -263,7 +269,20 @@ describe("onboardingJourney", () => {
       expect(data.completedAt).toBeNull();
     }
 
-    // 7. Import — the seam that flips `completed_at`.
+    // 7. Import — the seam that flips `completed_at`. The save path
+    // requires at least one committed (not rolled-back) import batch.
+    // Seed one directly so the journey test can exercise the flip
+    // without going through the full importer (covered separately in
+    // `importRepository.test.ts`).
+    await admin.$executeRaw`
+      INSERT INTO import_batches (
+        id, school_id, mapping, row_count, family_count, student_count,
+        enrolment_count, committed_at, created_by, updated_by, updated_at
+      ) VALUES (
+        gen_random_uuid(), ${RIVERSIDE_ID}::uuid, '{}'::jsonb, 0, 0, 0, 0,
+        now(), ${SOLO_USER}::uuid, ${SOLO_USER}::uuid, now()
+      )
+    `;
     {
       const data = unwrap(await markImportComplete({ skip: false }));
       expect(data.currentStep).toBe(OnboardingStep.Done);

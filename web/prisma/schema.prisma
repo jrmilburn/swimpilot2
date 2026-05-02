@@ -228,6 +228,7 @@ model School {
   aiCalls            AiCall[]
   onboardingProgress OnboardingProgress?
   pendingInvitations PendingInvitation[]
+  importBatches      ImportBatch[]
 
   @@map("schools")
 }
@@ -314,7 +315,15 @@ model Family {
   updatedBy               String                  @map("updated_by") @db.Uuid
   deletedAt               DateTime?               @map("deleted_at") @db.Timestamptz(6)
 
+  // Sprint 5 / Chunk 2: families inserted by the CSV importer carry a
+  // nullable `batch_id` so a subsequent rollback can delete them. Existing
+  // rows from outside imports stay null. RESTRICT on the FK ensures a
+  // batch row can't be deleted while families still reference it — the
+  // rollback path deletes families first, then the batch row.
+  batchId String? @map("batch_id") @db.Uuid
+
   school         School          @relation(fields: [schoolId], references: [id])
+  batch          ImportBatch?    @relation(fields: [batchId], references: [id])
   students       Student[]
   billingProfile BillingProfile?
   invoices       Invoice[]
@@ -322,6 +331,7 @@ model Family {
 
   @@index([schoolId])
   @@index([schoolId, primaryContactEmail])
+  @@index([batchId])
   @@map("families")
 }
 
@@ -341,8 +351,13 @@ model Student {
   updatedBy    String        @map("updated_by") @db.Uuid
   deletedAt    DateTime?     @map("deleted_at") @db.Timestamptz(6)
 
+  // Sprint 5 / Chunk 2: nullable batch_id so the CSV importer's rollback
+  // can find these rows. Same shape as families.batch_id.
+  batchId String? @map("batch_id") @db.Uuid
+
   school        School         @relation(fields: [schoolId], references: [id])
   family        Family         @relation(fields: [familyId], references: [id])
+  batch         ImportBatch?   @relation(fields: [batchId], references: [id])
   enrolments    Enrolment[]
   attendance    Attendance[]
   studentSkills StudentSkill[]
@@ -352,6 +367,7 @@ model Student {
   @@index([schoolId])
   @@index([familyId])
   @@index([schoolId, familyId])
+  @@index([batchId])
   @@map("students")
 }
 
@@ -432,15 +448,20 @@ model Enrolment {
   updatedBy String             @map("updated_by") @db.Uuid
   deletedAt DateTime?          @map("deleted_at") @db.Timestamptz(6)
 
+  // Sprint 5 / Chunk 2: nullable batch_id for CSV importer rollback.
+  batchId String? @map("batch_id") @db.Uuid
+
   school       School        @relation(fields: [schoolId], references: [id])
   student      Student       @relation(fields: [studentId], references: [id])
   class        Class         @relation(fields: [classId], references: [id])
+  batch        ImportBatch?  @relation(fields: [batchId], references: [id])
   attendance   Attendance[]
   invoiceLines InvoiceLine[]
 
   @@index([schoolId, studentId])
   @@index([schoolId, classId])
   @@index([schoolId, status])
+  @@index([batchId])
   @@map("enrolments")
 }
 
@@ -751,6 +772,41 @@ model PendingInvitation {
   @@index([schoolId])
   @@index([schoolId, status])
   @@map("pending_invitations")
+}
+
+// Sprint 5 / Chunk 2: per-commit metadata for the CSV importer. Carries the
+// column mapping the operator used (jsonb so future re-import / audit
+// surfaces have the original shape), the row counts the commit produced,
+// and a single nullable `rolled_back_at` timestamp that encodes both the
+// presence and timing of a rollback (a status enum would store the same
+// information twice). Tenant-scoped; RLS isolates per `app.school_id`.
+//
+// `mapping` is intentionally jsonb rather than a normalised side table:
+// the shape is operator-supplied free-form, only ever read whole, and
+// audit / replay both want the original verbatim.
+model ImportBatch {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String    @map("school_id") @db.Uuid
+  mapping         Json
+  rowCount        Int       @map("row_count")
+  familyCount     Int       @map("family_count")
+  studentCount    Int       @map("student_count")
+  enrolmentCount  Int       @map("enrolment_count")
+  committedAt     DateTime  @default(now()) @map("committed_at") @db.Timestamptz(6)
+  rolledBackAt    DateTime? @map("rolled_back_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       String    @map("created_by") @db.Uuid
+  updatedBy       String    @map("updated_by") @db.Uuid
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  school     School      @relation(fields: [schoolId], references: [id])
+  families   Family[]
+  students   Student[]
+  enrolments Enrolment[]
+
+  @@index([schoolId])
+  @@map("import_batches")
 }
 
 // Per-school sequential counter used by Sprint 8 to allocate human-readable

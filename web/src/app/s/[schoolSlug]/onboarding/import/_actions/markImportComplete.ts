@@ -5,23 +5,18 @@ import { tenantAction } from "@/lib/auth/tenantAction";
 import { ValidationError } from "@/lib/errors";
 import { OnboardingStep, OnboardingStepStatus } from "@/domain/enums";
 import * as onboardingProgressRepository from "@/repositories/onboardingProgressRepository";
+import * as importRepository from "@/repositories/importRepository";
 
-// Both branches finish the wizard. Skip is for an operator who plans
-// to import students later (or never); Continue is the same — there's
-// no enrolment editor on this stub. The Sprint 6 student importer
-// replaces this page; the action's contract stays the same.
+// `skip: true` finishes the wizard without requiring an import — the
+// operator can still come back and import later from the dashboard.
+// `skip: false` (the Save path) requires at least one committed,
+// not-yet-rolled-back batch so we never advertise the wizard as
+// "complete" with zero rostered students against the operator's intent.
 const Input = z.discriminatedUnion("skip", [
   z.object({ skip: z.literal(true) }),
   z.object({ skip: z.literal(false) }),
 ]);
 
-/**
- * Mark Import as completed (or skipped) AND flip the wizard's
- * `completed_at` timestamp in one transaction. This is the seam that
- * actually completes the wizard — every other step's
- * `markStepComplete` advances `current_step` but leaves
- * `completed_at` null.
- */
 export const markImportComplete = tenantAction(
   async ({ tx, schoolId }, input: unknown) => {
     const parsed = Input.safeParse(input);
@@ -29,6 +24,15 @@ export const markImportComplete = tenantAction(
       throw new ValidationError("Invalid input");
     }
     const { skip } = parsed.data;
+
+    if (!skip) {
+      const committed = await importRepository.countCommitted(tx);
+      if (committed < 1) {
+        throw new ValidationError(
+          "Import at least one CSV before finishing — or skip this step.",
+        );
+      }
+    }
 
     await onboardingProgressRepository.markStepStatus(tx, {
       schoolId,

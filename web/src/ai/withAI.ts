@@ -54,6 +54,33 @@ export function hashInput(input: unknown): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
 
+/**
+ * Like `hashInput` but with object keys sorted at every depth. Two inputs
+ * built with different key orderings collide.
+ *
+ * Sprint 5's CSV column-mapping prompt uses this so the same headers + sample
+ * rows hash the same regardless of how the action was constructed. Arrays
+ * preserve their order — only object keys are sorted.
+ */
+export function hashStableInput(input: unknown): string {
+  return createHash("sha256").update(stableStringify(input)).digest("hex");
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return "[" + value.map(stableStringify).join(",") + "]";
+  }
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  const parts = keys.map(
+    (k) => JSON.stringify(k) + ":" + stableStringify(obj[k]),
+  );
+  return "{" + parts.join(",") + "}";
+}
+
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) : s;
 }
@@ -108,6 +135,10 @@ export interface WithAIArgs<TInput> {
   feature: string;
   prompt: PromptModule<TInput>;
   input: TInput;
+  // Optional hasher override. Defaults to `hashInput` (naïve JSON.stringify).
+  // Sprint 5's CSV column-mapping prompt passes `hashStableInput` because
+  // the input is operator-shaped and key ordering isn't stable across calls.
+  hashInput?: (input: TInput) => string;
 }
 
 /**
@@ -127,7 +158,8 @@ export async function withAI<TInput>(
   const userId = actorId === SYSTEM_USER_ID ? null : actorId;
 
   const built = args.prompt.build(args.input);
-  const inputHash = hashInput(args.input);
+  const hasher = args.hashInput ?? hashInput;
+  const inputHash = hasher(args.input);
   const startedAt = Date.now();
 
   let response: Anthropic.Message;

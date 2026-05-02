@@ -18,6 +18,7 @@ import {
   initialImportFormState,
   saveImportForm,
 } from "../_actions/saveImportForm";
+import { AiMappingSuggestions } from "./AiMappingSuggestions";
 import { MappingPanel } from "./MappingPanel";
 
 type Props = { schoolSlug: string };
@@ -94,6 +95,11 @@ export function ImportWorkspace({ schoolSlug }: Props) {
         <div className="grid gap-6 md:grid-cols-2">
           <div className="flex flex-col gap-3">
             <PreviewPane headers={headers} rows={previewRows} />
+            <AiMappingSuggestions
+              headers={headers}
+              sampleRows={previewRows}
+              onApply={setMapping}
+            />
             <MappingPanel
               headers={headers}
               value={mapping}

@@ -89,9 +89,11 @@ export default async function ClassesStepPage({
             Set up your classes
           </h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Each class is a recurring slot at one of your locations.
-            Capacity is capped by the level&apos;s ratio. Multi-lane
-            pools can run concurrent classes at the same time.
+            Classes are the recurring time slots families enrol into.
+            Set them up per level — capacity is capped by the level&apos;s
+            ratio, and multi-lane pools can run concurrent classes at
+            the same time. You can add more classes from the dashboard
+            anytime later.
           </p>
         </header>
 

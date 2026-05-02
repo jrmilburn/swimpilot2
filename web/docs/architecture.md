@@ -488,17 +488,130 @@ the original skip was just a temporary deferral. Locations is the
 only step that doesn't allow Skip (the wizard can't render the rest
 without at least one location row to attach classes to).
 
-### The Sprint 5 stub
+### Classes step
 
-`/onboarding/classes` is a one-page placeholder until Sprint 5 ships
-the real Classes step. It renders inside the wizard chrome (the
-progress indicator highlights it as the current step — `classes` is
-in `WIZARD_STEPS`) with a "Coming soon" card and two affordances:
-"Back to Skills" and "Skip the rest of onboarding for now." The skip
-button calls `skipRemainingOnboarding`, which marks the wizard
-complete and bounces the owner to the dashboard. Sprint 5 replaces
-the page outright; the action either gets removed (the real step has
-its own `markClassesComplete`) or kept as a generic exit affordance.
+Sprint 5 / Chunk 1 replaced the Sprint 4 placeholder with the real
+Classes step. The page renders an accordion grouped by level — a
+school's "Beginner" level expands to show its classes, plus a "Add
+class" row that opens an inline editor for day, start time, duration,
+location, and capacity.
+
+Classes belong to a level *and* a location, so the page short-circuits
+into a "Add a location first" or "Add a level first" hint when either
+prerequisite is empty. Both back-links keep Skip available so the
+operator can defer Classes entirely; the wizard's terminal step
+(`markImportComplete`) is the only one that actually flips
+`completed_at`.
+
+The capacity invariant — `capacity ≤ level.ratio` — is enforced at two
+layers, deliberately. The DB has a row-level `CHECK` triggered by a
+function that joins to the level (see "Domain model — Class levels
+and classes → `capacity ≤ level.ratio`"); the action layer in
+`addClass` / `updateClass` does the same check before the insert so
+the operator gets a clean validation error rather than a Postgres
+constraint violation. Two layers, one truth: the trigger is the safety
+rail, the action is the UX.
+
+Teachers are the cross-step seam. A class can park on a pending
+invitation via `pendingTeacherInvitationId` (XOR with `teacherId` —
+see the Teachers sub-section). At Classes-step time the operator
+hasn't been to Teachers yet, so the create form has no teacher
+picker; teachers are bound on the Teachers step that follows.
+
+Save path requires ≥ 1 class; Skip is always available. The
+authoritative count check lives in `markClassesComplete` so a stale
+page can't bypass the gate.
+
+### Teachers step
+
+Sprint 5 / Chunk 1. Three panes top-to-bottom: a roster (real teachers
+plus pending invitations, with a Revoke per pending row), an invite
+form (email-only — Clerk owns the rest of the identity dance), and an
+assignment list (classes with neither a teacher nor a pending
+invitation, with a per-row dropdown to bind one).
+
+Inviting a teacher creates a Clerk Invitation and a corresponding
+`pending_invitations` row. We hold both — Clerk is the auth seam, the
+local row is the addressable surface for "park a class on this
+person." The two are joined by `clerkInvitationId`. Revoke walks the
+chain in reverse so a cancelled local row also cancels the upstream
+Clerk invitation.
+
+Acceptance is asymmetric. The teacher signs in via Clerk's invitation
+flow and lands on a redirect handler that calls
+`resolveAcceptedInvitation`. That action does three things atomically
+inside one `withTenant` tx: (a) flip the pending row to `accepted`
+with the new `acceptedUserId`, (b) materialise the membership
+(`role='teacher'`), and (c) for every class parked on the invitation,
+swap `pendingTeacherInvitationId = NULL, teacherId = <new>`. The
+single SQL UPDATE per swap keeps the row's mutual-exclusion invariant
+(at most one of `teacherId` / `pendingTeacherInvitationId` is non-null)
+true throughout.
+
+The XOR is enforced at the DB layer:
+
+```sql
+CHECK (
+  (teacher_id IS NULL AND pending_teacher_invitation_id IS NULL)
+  OR (teacher_id IS NOT NULL AND pending_teacher_invitation_id IS NULL)
+  OR (teacher_id IS NULL AND pending_teacher_invitation_id IS NOT NULL)
+)
+```
+
+No count gate either way — Teachers is fully optional. A school can
+roster classes against the owner's own teacher record indefinitely.
+
+### Import step
+
+Sprint 5 / Chunk 2 (the importer) and Chunk 3 (AI suggestions) build
+the final step. The page (`ImportWorkspace`) is a client component
+that lifts `mapping` and `resolutions` state — `MappingPanel` is
+externally controllable so the AI suggestions panel can write a new
+mapping in by calling the same `setMapping` the manual pane uses.
+The contract is enforced by `tests/unit/mappingPanelContract.test.ts`:
+the panel cannot quietly re-internalise the state without breaking
+the test.
+
+The bridge (`saveImportForm`) handles six intents: `parse-csv`,
+`dry-run`, `commit`, `rollback`, `save`, `skip`. Only the last two
+redirect; the four interactive intents return updated form state for
+`useActionState` to render. The AI suggestions panel calls
+`suggestColumnMapping` directly via `useTransition` rather than
+through the bridge — the bridge is for sequential page state, the AI
+fetch is parallel and asynchronous to the operator's work.
+
+Validation has four rule families, all in `processRow`:
+`duplicate_email` (within-batch and against existing families),
+`missing_required` (email / first / last; enrolment is all-or-
+nothing; DOB parse errors surface here), `unknown_level`
+(case-insensitive lookup with a Levenshtein ≤ 3 suggestion), and
+`capacity_breach` (warning-level: existing + proposed + 1 > capacity,
+proposed accumulates within the batch). The rule-by-rule resolution
+buttons (Merge, Use suggested level, Skip enrolment, Exclude row)
+update the local resolutions map; a fresh dry-run re-validates with
+the resolutions applied.
+
+Dry-run uses a Postgres `SAVEPOINT` inside the open `withTenant` tx,
+runs the full insert pass, then `ROLLBACK TO SAVEPOINT` so the
+operator sees realistic row IDs and capacity numbers without
+committing. Both `dryRunImport` and `commitImport` call the same
+`runImportPass(persistBatch: boolean)` driver — there is no second
+implementation to drift. Commit re-validates inside its own savepoint
+first; if blocking, the savepoint rolls back and the bridge surfaces
+the report. Rollback walks `enrolments → students → families` in FK
+order then stamps `rolledBackAt` on the batch row.
+
+The AI layer added in Chunk 3 sits on top, not in the path. The
+`csv-column-map` prompt module runs on Haiku; the action returns a
+discriminated union `{ ok: true, mapping, confidence } | { ok: false,
+reason: "low_confidence" | "ai_unavailable" | "invalid_response" }`.
+Every failure mode degrades to the existing hand-mapping flow — the
+form keeps working when AI is down, when the response doesn't parse,
+when the model is uncertain across the board, or when the API key
+is missing. The `ai_calls` row is written by `withAI` itself, with
+`feature: "onboarding-csv-map"`. The hash uses `hashStableInput` so
+the same headers + sample rows hash the same regardless of how the
+caller constructed the input.
 
 ## Onboarding templates
 

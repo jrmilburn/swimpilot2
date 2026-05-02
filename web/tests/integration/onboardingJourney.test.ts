@@ -42,6 +42,10 @@ import { addClass } from "../../src/app/s/[schoolSlug]/onboarding/classes/_actio
 import { markClassesComplete } from "../../src/app/s/[schoolSlug]/onboarding/classes/_actions/markClassesComplete";
 import { markTeachersComplete } from "../../src/app/s/[schoolSlug]/onboarding/teachers/_actions/markTeachersComplete";
 import { markImportComplete } from "../../src/app/s/[schoolSlug]/onboarding/import/_actions/markImportComplete";
+import {
+  initialImportFormState,
+  saveImportForm,
+} from "../../src/app/s/[schoolSlug]/onboarding/import/_actions/saveImportForm";
 import { WeekDay } from "../../src/domain/enums";
 
 const admin = new PrismaClient({
@@ -289,6 +293,21 @@ describe("onboardingJourney", () => {
       expect(data.completedAt).not.toBeNull();
       expect(data.completedWizard).toBe(true);
     }
+
+    // Post-completion redirect: re-running the import bridge with intent
+    // "save" against the now-completed wizard should still throw the
+    // Next.js redirect that lands the operator on `/s/<slug>`. We assert
+    // on the digest because `redirect()` throws a control-flow error
+    // rather than returning. (Same pattern as `tenantRouting.test.ts`.)
+    {
+      const fd = new FormData();
+      fd.set("intent", "save");
+      await expect(
+        saveImportForm("riverside", initialImportFormState, fd),
+      ).rejects.toMatchObject({
+        digest: expect.stringMatching(/NEXT_REDIRECT.*\/s\/riverside/),
+      });
+    }
   });
 
   test("skip path: walks the same journey skipping every skip-able step", async () => {
@@ -371,6 +390,37 @@ describe("onboardingJourney", () => {
       expect(data.currentStep).toBe(OnboardingStep.Done);
       expect(data.completedAt).not.toBeNull();
       expect(data.completedWizard).toBe(true);
+    }
+
+    // Post-completion redirect: same shape as the save path. The skip
+    // intent never gates on a committed batch, so it always redirects
+    // when the wizard is otherwise complete.
+    {
+      const fd = new FormData();
+      fd.set("intent", "skip");
+      await expect(
+        saveImportForm("riverside", initialImportFormState, fd),
+      ).rejects.toMatchObject({
+        digest: expect.stringMatching(/NEXT_REDIRECT.*\/s\/riverside/),
+      });
+    }
+
+    // Every skip-able step ended up Skipped (locations excluded — it
+    // can't be skipped). One sweep at the end keeps the walk readable.
+    const finalProgress = await admin.onboardingProgress.findUnique({
+      where: { schoolId: RIVERSIDE_ID },
+    });
+    expect(finalProgress?.completedAt).not.toBeNull();
+    const statuses = finalProgress?.stepStatuses as Record<string, string>;
+    for (const step of [
+      OnboardingStep.Profile,
+      OnboardingStep.Levels,
+      OnboardingStep.Skills,
+      OnboardingStep.Classes,
+      OnboardingStep.Teachers,
+      OnboardingStep.Import,
+    ]) {
+      expect(statuses[step]).toBe(OnboardingStepStatus.Skipped);
     }
   });
 });

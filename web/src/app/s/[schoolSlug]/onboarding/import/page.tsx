@@ -31,10 +31,11 @@ export default async function ImportStepPage({
             Import your students
           </h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Upload a CSV of your existing roster. We&apos;ll preview a
-            handful of rows, let you map your columns to ours, dry-run
-            for problems, and only commit once you&apos;re happy. You
-            can roll any committed batch back from this page.
+            Bring your existing roster across as a CSV. We&apos;ll preview
+            a handful of rows, suggest column mappings, dry-run for
+            problems, and only commit once you&apos;re happy. Any
+            committed batch can be rolled back from this page, and you
+            can come back to import more rosters anytime later.
           </p>
         </header>
 
